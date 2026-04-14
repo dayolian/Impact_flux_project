@@ -19,7 +19,7 @@
 
 # UPDATED SEPT 2023 
 # Downloads handled via Chrome. Must set chrome default 
-# download directory to desires location 
+# download directory to desired location 
 
 #import selenium
 import arcpy
@@ -118,11 +118,11 @@ def clip_ctx_images(ctxId1, ctxId2, polygon):
 
 
 # Variable initializations as needed
-x1 = -60
+x1 = 80
 y1 = 0
-x2 = -50
+x2 = 90
 y2 = 75
-tag = 'Area300N'
+tag = 'Area80N'
 #CHANGE CHROME DOWNLOAD PATH!!!!!
 #str_x1 = 
 

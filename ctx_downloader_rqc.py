@@ -9,7 +9,7 @@ import csv
 import os
 import sys
 import requests
-import urllib
+import urllib.request
 import webbrowser
 import time
 
@@ -21,10 +21,15 @@ def ctx_downloader_rqc(ctxId):
 	ctxurl3 = '/prj_full/'
 
 	# Retrieve the volume ID from both pages to fill out geotiff url
-	fp = urllib.urlopen('https://viewer.mars.asu.edu/viewer/ctx/' + ctxId)
-	page = fp.read()
-	idspot = str(page).find('mrox_')
-	volid = str(page)[idspot:idspot+9]
+	fp = urllib.request.urlopen('https://viewer.mars.asu.edu/viewer/ctx/' + ctxId)
+	page = fp.read().decode('utf-8')
+	idspot = page.find('mrox_')
+	volid = page[idspot:idspot+9]
+	#Python 2 version
+	#fp = urllib.request.urlopen('https://viewer.mars.asu.edu/viewer/ctx/' + ctxId)
+	#page = fp.read()
+	#idspot = str(page).find('mrox_')
+	#volid = str(page)[idspot:idspot+9]
 
 	# Construct URL	
 	url = ctxurl1 + ctxId + ctxurl2 + volid + ctxurl3 + ctxId + '.tiff'
