@@ -1,1 +1,8 @@
+#Ignore all folders and their contents
 */
+
+#Ignore the CTX footprint shapefile
+mars_mro_ctx_edr*
+
+#Ignore the CTX intersections shapefile
+CTX_pair_intersections*
