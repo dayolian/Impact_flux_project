@@ -118,11 +118,11 @@ def clip_ctx_images(ctxId1, ctxId2, polygon):
 
 
 # Variable initializations as needed
-x1 = 0
-y1 = -75
-x2 = 10
-y2 = -25
-tag = 'Area010S'
+x1 = -180
+y1 = 0
+x2 = -170
+y2 = 75
+tag = 'Area180N'
 #CHANGE CHROME DOWNLOAD PATH!!!!!
 #str_x1 = 
 
