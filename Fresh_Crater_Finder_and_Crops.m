@@ -102,17 +102,17 @@ for k = 1:length(folders)
             dt ma scale crop_size half_size save_interval ...
             xgrid ygrid zgrid elngrid
 
-        % ── Load pair list ────────────────────────────────────────────────────
-        clip_csv = fullfile(folderPath, 'clip_pairs.csv');
-        if ~isfile(clip_csv)
-            fprintf('  No clip_pairs.csv found, skipping folder.\n');
+        % ── Discover pair subfolders ──────────────────────────────────────────
+        subDirs = dir(folderPath);
+        subDirs = subDirs([subDirs.isdir]);
+        subDirs = subDirs(~ismember({subDirs.name}, {'.', '..'}));
+
+        if isempty(subDirs)
+            fprintf('  No subfolders found, skipping folder.\n');
             continue
         end
 
-        % clip_pairs.csv is a single-row CSV of alternating ctx IDs
-        [~, pair_list, ~] = xlsread(clip_csv);
-
-        pair_count   = floor(length(pair_list) / 2);
+        pair_count   = length(subDirs);
         pairs_done   = 0;
         folder_hits  = 0;
 
@@ -121,11 +121,9 @@ for k = 1:length(folders)
 
         %% ── INNER LOOP: IMAGE PAIRS ──────────────────────────────────────────
 
-        for i = 1:2:length(pair_list)
+        for i = 1:length(subDirs)
 
-            pl1       = pair_list{i};
-            pl2       = pair_list{i+1};
-            name_root = [pl1, '_', pl2];
+            name_root = subDirs(i).name;
             pairDir   = fullfile(folderPath, name_root);
 
             try
@@ -134,8 +132,8 @@ for k = 1:length(folders)
                 %% ── SKIP CHECK ───────────────────────────────────────────────
                 % targets.csv existing means the full pipeline already ran for
                 % this pair (detection + crops + registration score all done).
-                if isfile('targets.csv')
-                    fprintf('  Skipping (targets.csv exists): %s\n', name_root);
+                if isfile('targets.csv') && isfile('hit_list.csv')
+                    fprintf('  Skipping (targets.csv + hit_list.csv exist): %s\n', name_root);
 
                     % Still count hits for folder summary if needed
                     try
@@ -158,7 +156,7 @@ for k = 1:length(folders)
                     continue
                 end
 
-                fprintf('  Pair %d of %d: %s\n', (i+1)/2, pair_count, name_root);
+                fprintf('  Pair %d of %d: %s\n', i, pair_count, name_root);
 
                 %% ── LOAD IMAGES ──────────────────────────────────────────────
 
@@ -169,12 +167,12 @@ for k = 1:length(folders)
                 bx = mean(Rb.XWorldLimits);
                 by = mean(Rb.YWorldLimits);
 
-                % Overlap area in km² from geotiff spatial extent
-                % Assumes projected units are meters. Verify against existing
-                % pairsinfo values if unsure.
-                width_m  = abs(Rb.XWorldLimits(2) - Rb.XWorldLimits(1));
-                height_m = abs(Rb.YWorldLimits(2) - Rb.YWorldLimits(1));
-                areakm2  = (width_m * height_m) / 1e6;
+                % Overlap area in km²: count valid pixels × pixel area.
+                % Bounding box overestimates area for tilted (non-N/S) images;
+                % pixel counting gives true coverage regardless of orientation.
+                valid_mask    = double(Ab) ~= 0 & double(Ab) ~= 255;
+                pixel_area_m2 = Rb.CellExtentInWorldX * Rb.CellExtentInWorldY;
+                areakm2       = sum(valid_mask, 'all') * pixel_area_m2 / 1e6;
 
                 %% ── PREPROCESS ───────────────────────────────────────────────
 
@@ -384,11 +382,6 @@ for k = 1:length(folders)
 
                 %% ── UPDATE MASTER PAIRSINFO TABLE ────────────────────────────
 
-                hitratio = 0;
-                if areakm2 > 0
-                    hitratio = n_hits / areakm2;
-                end
-
                 masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
                     pairDir, name_root, bx, by, areakm2, n_hits, score);
 
@@ -446,26 +439,37 @@ fprintf('\nAll folders complete.\n');
 function masterTable = updateMasterTable(masterTable, colNames, ...
         pairDir, ctxID, bx, by, areakm2, n_hits, score)
     % Add or update a row in the master pairsinfo table.
+    % Handles three cases:
+    %   1. Row not found              → insert new row
+    %   2. Row found, score missing   → update (incomplete row from prior run)
+    %   3. Row found, score present   → update (overwrite with fresh data)
 
     hitratio = 0;
     if areakm2 > 0
         hitratio = n_hits / areakm2;
     end
 
-    % Check if this pair already has a row (e.g. from a previous partial run)
+    % Find existing row by wholepath (normalize to string to avoid cell/char mismatches)
+    existingIdx = [];
     if ismember('wholepath', masterTable.Properties.VariableNames) && ...
             height(masterTable) > 0
-        existing = find(strcmp(masterTable.wholepath, pairDir), 1);
-    else
-        existing = [];
+        existingIdx = find(strcmp(string(masterTable.wholepath), string(pairDir)), 1);
+    end
+
+    % If a row was found, check whether it is complete (has a RegistrationScore)
+    if ~isempty(existingIdx)
+        existingScore = masterTable.RegistrationScore(existingIdx);
+        if isnan(existingScore) || existingScore == 0
+            fprintf('    Updating incomplete row (no RegistrationScore): %s\n', pairDir);
+        end
     end
 
     newRow = {string(pairDir), string(ctxID), bx, by, ...
               areakm2, double(n_hits), hitratio, score};
 
-    if ~isempty(existing)
+    if ~isempty(existingIdx)
         for c = 1:length(colNames)
-            masterTable.(colNames{c})(existing) = newRow{c};
+            masterTable.(colNames{c})(existingIdx) = newRow{c};
         end
     else
         newRowTable = cell2table(newRow, 'VariableNames', colNames);

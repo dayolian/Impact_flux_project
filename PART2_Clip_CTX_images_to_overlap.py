@@ -1,4 +1,15 @@
-# UPDATED SEPT 2023 
+# Image processing step for CTX-based impact flux project 
+# In this step, downloaded CTX images are paired based on a 
+# footprint shapefile and clipped to their overlapping extent. 
+# Each pair of clips sits in a new folder and a CVS of the 
+# pairs is generated in the last stage, as well as deletion
+# of all the original CTX images for data volume efficiency. 
+
+# Updated April 2026
+# Mackenzie Day, Brandon Robinson, Jonathan Sneed
+
+# Troubleshooting - commented out the remove CTX images at the end
+# (made a mistake and downloaded two regions to the same folder)
 
 
 import arcpy
@@ -251,8 +262,8 @@ for pair, polygon in pair_to_polygon.items():
 
 
 #Temp comment out while trblshting
-for fid in unique_fids:
-	os.remove(fid_to_ctxid[fid] + '.tiff')
+#for fid in unique_fids:
+#	os.remove(fid_to_ctxid[fid] + '.tiff')
 
 os.chdir(direct + '\\' + path)
 
