@@ -64,7 +64,7 @@ pairsinfo_cols = {'wholepath','ctxID','centerlon','centerlat', ...
                   'areakm2','hits','hitratio','RegistrationScore'};
 
 if isfile(masterFile)
-    masterTable = readtable(masterFile, 'Delimiter', ',');
+    masterTable = readtable(masterFile, 'Delimiter', ',', 'TextType', 'string');
     % Ensure all expected columns exist (forward compatibility)
     for c = 1:length(pairsinfo_cols)
         if ~ismember(pairsinfo_cols{c}, masterTable.Properties.VariableNames)
@@ -89,7 +89,7 @@ folderSummaryFile = fullfile(mainDir, 'folder_summary.csv');
 folderSummary_cols = {'output_folder','total_pairs','has_candidates_t','has_both'};
 
 if isfile(folderSummaryFile)
-    folderSummaryTable = readtable(folderSummaryFile, 'Delimiter', ',');
+    folderSummaryTable = readtable(folderSummaryFile, 'Delimiter', ',', 'TextType', 'string');
 else
     folderSummaryTable = table('Size', [0, length(folderSummary_cols)], ...
         'VariableTypes', {'string','double','double','double'}, ...
@@ -101,7 +101,7 @@ end
 folders = dir(mainDir);
 folders = folders([folders.isdir]);
 folders = folders(~ismember({folders.name}, {'.', '..'}));
-folders = folders(startsWith({folders.name}, 'output'));
+folders = folders(startsWith({folders.name}, 'output_-115_-110_'));
 
 for k = 1:length(folders)
 
@@ -180,11 +180,14 @@ for k = 1:length(folders)
                     needsEntry = isempty(existingIdx);
                     if ~needsEntry
                         existingScore = masterTable.RegistrationScore(existingIdx);
-                        needsEntry = isnan(existingScore) || existingScore == 0;
+                        % Only re-run if score was never computed (NaN).
+                        % A genuine score of 0 is a valid result and should not
+                        % trigger re-processing on every run.
+                        needsEntry = isnan(existingScore);
                     end
 
                     if needsEntry
-                        skip_bx = NaN; skip_by = NaN; skip_areakm2 = NaN; skip_score = 0;
+                        skip_bx = NaN; skip_by = NaN; skip_areakm2 = NaN; skip_score = NaN;
                         try
                             ctx1_skip = [name_root, '_clippedB.tif'];
                             ctx2_skip = [name_root, '_clippedA.tif'];
