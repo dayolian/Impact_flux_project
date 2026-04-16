@@ -55,7 +55,7 @@ x1 = 80
 y1 = 0
 x2 = 90
 y2 = 75
-tag = 'Area010S'
+tag = 'Area80N'
 #str_x1 = 
 
 # String constructions for file names
