@@ -83,6 +83,19 @@ end
 
 logID = fopen(logFile, 'a');
 
+%% ── LOAD OR INITIALIZE FOLDER SUMMARY TABLE ─────────────────────────────────
+
+folderSummaryFile = fullfile(mainDir, 'folder_summary.csv');
+folderSummary_cols = {'output_folder','total_pairs','has_candidates_t','has_both'};
+
+if isfile(folderSummaryFile)
+    folderSummaryTable = readtable(folderSummaryFile, 'Delimiter', ',');
+else
+    folderSummaryTable = table('Size', [0, length(folderSummary_cols)], ...
+        'VariableTypes', {'string','double','double','double'}, ...
+        'VariableNames', folderSummary_cols);
+end
+
 %% ── OUTER LOOP: OUTPUT FOLDERS ───────────────────────────────────────────────
 
 folders = dir(mainDir);
@@ -99,6 +112,7 @@ for k = 1:length(folders)
         clearvars -except ...
             k folderPath folders mainDir logID logFile ...
             masterFile masterTable pairsinfo_cols ...
+            folderSummaryFile folderSummaryTable folderSummary_cols ...
             dt ma scale crop_size half_size save_interval ...
             xgrid ygrid zgrid elngrid
 
@@ -115,6 +129,17 @@ for k = 1:length(folders)
         pair_count   = length(subDirs);
         pairs_done   = 0;
         folder_hits  = 0;
+
+        % ── Pre-count candidates_t and hit_list presence ──────────────────────
+        n_has_cand = 0;
+        n_has_both = 0;
+        for pi = 1:length(subDirs)
+            sp = fullfile(folderPath, subDirs(pi).name);
+            has_cand = isfile(fullfile(sp, 'candidates_t.mat'));
+            has_hit  = isfile(fullfile(sp, 'hit_list.csv'));
+            if has_cand,            n_has_cand = n_has_cand + 1; end
+            if has_cand && has_hit, n_has_both = n_has_both + 1; end
+        end
 
         cd(folderPath);
         tic
@@ -135,11 +160,68 @@ for k = 1:length(folders)
                 if isfile('targets.csv') && isfile('hit_list.csv')
                     fprintf('  Skipping (targets.csv + hit_list.csv exist): %s\n', name_root);
 
-                    % Still count hits for folder summary if needed
+                    % Count hits for folder summary
+                    skip_hits = 0;
                     try
                         tgt = readtable('targets.csv');
-                        folder_hits = folder_hits + height(tgt);
+                        skip_hits = height(tgt);
+                        folder_hits = folder_hits + skip_hits;
                     catch
+                    end
+
+                    % Ensure this pair has a row in masterTable.
+                    % If missing or incomplete (no score), do a lightweight
+                    % recovery using candidates_t.mat + geotiff for bx/by/areakm2.
+                    existingIdx = [];
+                    if height(masterTable) > 0
+                        existingIdx = find(strcmp(string(masterTable.wholepath), ...
+                            string(pairDir)), 1);
+                    end
+                    needsEntry = isempty(existingIdx);
+                    if ~needsEntry
+                        existingScore = masterTable.RegistrationScore(existingIdx);
+                        needsEntry = isnan(existingScore) || existingScore == 0;
+                    end
+
+                    if needsEntry
+                        skip_bx = NaN; skip_by = NaN; skip_areakm2 = NaN; skip_score = 0;
+                        try
+                            ctx1_skip = [name_root, '_clippedB.tif'];
+                            ctx2_skip = [name_root, '_clippedA.tif'];
+                            if isfile(ctx1_skip) && isfile(ctx2_skip)
+                                [Ab_skip, Rb_skip] = geotiffread(ctx1_skip);
+                                [Aa_skip, ~]       = geotiffread(ctx2_skip);
+
+                                skip_bx = mean(Rb_skip.XWorldLimits);
+                                skip_by = mean(Rb_skip.YWorldLimits);
+
+                                valid_skip   = double(Ab_skip) ~= 0 & double(Ab_skip) ~= 255;
+                                px_area_skip = Rb_skip.CellExtentInWorldX * Rb_skip.CellExtentInWorldY;
+                                skip_areakm2 = sum(valid_skip, 'all') * px_area_skip / 1e6;
+
+                                % Preprocess and run alignment to get real score
+                                Ab_skip = uint8(Ab_skip); Aa_skip = uint8(Aa_skip);
+                                Ab_skip(Ab_skip == 0) = NaN; Aa_skip(Aa_skip == 0) = NaN;
+                                Ab_skip(Ab_skip == 255) = NaN; Aa_skip(Aa_skip == 255) = NaN;
+                                Ab_skip = int16(Ab_skip); Aa_skip = int16(Aa_skip);
+                                Arange_skip = prctile(Aa_skip, 95, 'all') - prctile(Aa_skip, 5, 'all');
+                                Brange_skip = prctile(Ab_skip, 95, 'all') - prctile(Ab_skip, 5, 'all');
+                                Ad_skip = Aa_skip - prctile(Aa_skip, 5, 'all');
+                                Ad_skip = Ad_skip * (double(Brange_skip) / double(Arange_skip)) + prctile(Ab_skip, 5, 'all');
+                                Ad_skip = Ad_skip + (mean(mean(mean(Ab_skip))) - mean(mean(mean(Ad_skip))));
+                                Ab_skip = uint8(Ab_skip); Ad_skip = uint8(Ad_skip);
+                                [~, skip_score] = imregcorr( ...
+                                    imresize(Ad_skip, 1/scale), ...
+                                    imresize(Ab_skip, 1/scale), ...
+                                    'translation');
+                                fprintf('    Re-ran alignment for score: %.4f\n', skip_score);
+                            end
+                        catch skip_err
+                            fprintf('    Could not recover alignment score: %s\n', skip_err.message);
+                        end
+                        masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
+                            pairDir, name_root, skip_bx, skip_by, skip_areakm2, skip_hits, skip_score);
+                        fprintf('    Added/updated pairsinfo row: %s\n', name_root);
                     end
 
                     cd(folderPath);
@@ -230,11 +312,18 @@ for k = 1:length(folders)
                     'eccentricity', 'convexarea', 'eulernumber');
 
                 if isempty(stats)
-                    % No candidates — write empty outputs and move on
-                    writePairOutputs(pairDir, name_root, bx, by, ...
-                        [], [], [], [], [], score, ...
-                        areakm2, masterTable, pairsinfo_cols, masterFile);
-                    [masterTable] = updateMasterTable(masterTable, pairsinfo_cols, ...
+                    % No candidates — write empty output files and move on
+                    ctxID = name_root;
+                    LOC_pass = zeros(0,2); ARE_pass = []; PAR_pass = [];
+                    ECC_pass = []; CVA_pass = [];
+                    save('candidates_t.mat', 'ctxID', 'bx', 'by', ...
+                        'LOC_pass', 'ARE_pass', 'PAR_pass', 'ECC_pass', 'CVA_pass');
+                    emptyTargets = table(zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), ...
+                        'VariableNames', {'LOC_pass_1','LOC_pass_2','ARE_pass','PAR_pass','CVA_pass','ECC_pass'});
+                    writetable(emptyTargets, 'targets.csv');
+                    emptyHitList = table(cell(0,1), zeros(0,1), 'VariableNames', {'prefix','processed'});
+                    writetable(emptyHitList, 'hit_list.csv');
+                    masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
                         pairDir, name_root, bx, by, areakm2, 0, score);
                     cd(folderPath);
                     pairs_done = pairs_done + 1;
@@ -411,6 +500,20 @@ for k = 1:length(folders)
         % Save master table at end of each output folder
         writetable(masterTable, masterFile);
 
+        % ── Update folder summary table ───────────────────────────────────────
+        existingFolderIdx = find(strcmp(string(folderSummaryTable.output_folder), ...
+            string(folders(k).name)), 1);
+        newFolderRow = {string(folders(k).name), pair_count, n_has_cand, n_has_both};
+        if ~isempty(existingFolderIdx)
+            for c = 1:length(folderSummary_cols)
+                folderSummaryTable.(folderSummary_cols{c})(existingFolderIdx) = newFolderRow{c};
+            end
+        else
+            folderSummaryTable = [folderSummaryTable; ...
+                cell2table(newFolderRow, 'VariableNames', folderSummary_cols)];
+        end
+        writetable(folderSummaryTable, folderSummaryFile);
+
     catch ME
         fprintf('Error in folder %s: %s\n', folderPath, ME.message);
         fprintf(logID, 'Error in folder: %s\nMessage: %s\n\n', folderPath, ME.message);
@@ -421,6 +524,7 @@ end % outer folder loop
 %% ── FINAL SAVE AND CLEANUP ───────────────────────────────────────────────────
 
 writetable(masterTable, masterFile);
+writetable(folderSummaryTable, folderSummaryFile);
 fclose(logID);
 cd(mainDir);
 
