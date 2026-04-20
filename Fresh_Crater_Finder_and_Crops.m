@@ -101,7 +101,7 @@ end
 folders = dir(mainDir);
 folders = folders([folders.isdir]);
 folders = folders(~ismember({folders.name}, {'.', '..'}));
-folders = folders(startsWith({folders.name}, 'output_-115_-110_'));
+folders = folders(startsWith({folders.name}, 'output_')); 
 
 for k = 1:length(folders)
 
@@ -133,13 +133,13 @@ for k = 1:length(folders)
         % ── Pre-count candidates_t and hit_list presence ──────────────────────
         n_has_cand = 0;
         n_has_both = 0;
-        for pi = 1:length(subDirs)
-            sp = fullfile(folderPath, subDirs(pi).name);
-            has_cand = isfile(fullfile(sp, 'candidates_t.mat'));
-            has_hit  = isfile(fullfile(sp, 'hit_list.csv'));
-            if has_cand,            n_has_cand = n_has_cand + 1; end
-            if has_cand && has_hit, n_has_both = n_has_both + 1; end
-        end
+        % for pIdx = 1:length(subDirs)
+        %     sp = fullfile(folderPath, subDirs(pIdx).name);
+        %     has_cand = isfile(fullfile(sp, 'candidates_t.mat'));
+        %     has_hit  = isfile(fullfile(sp, 'hit_list.csv'));
+        %     if has_cand,            n_has_cand = n_has_cand + 1; end
+        %     if has_cand && has_hit, n_has_both = n_has_both + 1; end
+        % end
 
         cd(folderPath);
         tic
@@ -155,78 +155,25 @@ for k = 1:length(folders)
                 cd(pairDir)
 
                 %% ── SKIP CHECK ───────────────────────────────────────────────
-                % targets.csv existing means the full pipeline already ran for
-                % this pair (detection + crops + registration score all done).
-                if isfile('targets.csv') && isfile('hit_list.csv')
-                    fprintf('  Skipping (targets.csv + hit_list.csv exist): %s\n', name_root);
-
-                    % Count hits for folder summary
-                    skip_hits = 0;
-                    try
-                        tgt = readtable('targets.csv');
-                        skip_hits = height(tgt);
-                        folder_hits = folder_hits + skip_hits;
-                    catch
-                    end
-
-                    % Ensure this pair has a row in masterTable.
-                    % If missing or incomplete (no score), do a lightweight
-                    % recovery using candidates_t.mat + geotiff for bx/by/areakm2.
-                    existingIdx = [];
-                    if height(masterTable) > 0
-                        existingIdx = find(strcmp(string(masterTable.wholepath), ...
-                            string(pairDir)), 1);
-                    end
-                    needsEntry = isempty(existingIdx);
-                    if ~needsEntry
+                % Skip only if pairsinfo has a row for this pair with both a
+                % RegistrationScore and hits > 0. Zero-hit rows are re-run in
+                % case the zero was caused by a processing error.
+                skipPair = false;
+                if height(masterTable) > 0
+                    existingIdx = find(strcmp(string(masterTable.wholepath), ...
+                        string(pairDir)), 1);
+                    if ~isempty(existingIdx)
                         existingScore = masterTable.RegistrationScore(existingIdx);
-                        % Only re-run if score was never computed (NaN).
-                        % A genuine score of 0 is a valid result and should not
-                        % trigger re-processing on every run.
-                        needsEntry = isnan(existingScore);
-                    end
-
-                    if needsEntry
-                        skip_bx = NaN; skip_by = NaN; skip_areakm2 = NaN; skip_score = NaN;
-                        try
-                            ctx1_skip = [name_root, '_clippedB.tif'];
-                            ctx2_skip = [name_root, '_clippedA.tif'];
-                            if isfile(ctx1_skip) && isfile(ctx2_skip)
-                                [Ab_skip, Rb_skip] = geotiffread(ctx1_skip);
-                                [Aa_skip, ~]       = geotiffread(ctx2_skip);
-
-                                skip_bx = mean(Rb_skip.XWorldLimits);
-                                skip_by = mean(Rb_skip.YWorldLimits);
-
-                                valid_skip   = double(Ab_skip) ~= 0 & double(Ab_skip) ~= 255;
-                                px_area_skip = Rb_skip.CellExtentInWorldX * Rb_skip.CellExtentInWorldY;
-                                skip_areakm2 = sum(valid_skip, 'all') * px_area_skip / 1e6;
-
-                                % Preprocess and run alignment to get real score
-                                Ab_skip = uint8(Ab_skip); Aa_skip = uint8(Aa_skip);
-                                Ab_skip(Ab_skip == 0) = NaN; Aa_skip(Aa_skip == 0) = NaN;
-                                Ab_skip(Ab_skip == 255) = NaN; Aa_skip(Aa_skip == 255) = NaN;
-                                Ab_skip = int16(Ab_skip); Aa_skip = int16(Aa_skip);
-                                Arange_skip = prctile(Aa_skip, 95, 'all') - prctile(Aa_skip, 5, 'all');
-                                Brange_skip = prctile(Ab_skip, 95, 'all') - prctile(Ab_skip, 5, 'all');
-                                Ad_skip = Aa_skip - prctile(Aa_skip, 5, 'all');
-                                Ad_skip = Ad_skip * (double(Brange_skip) / double(Arange_skip)) + prctile(Ab_skip, 5, 'all');
-                                Ad_skip = Ad_skip + (mean(mean(mean(Ab_skip))) - mean(mean(mean(Ad_skip))));
-                                Ab_skip = uint8(Ab_skip); Ad_skip = uint8(Ad_skip);
-                                [~, skip_score] = imregcorr( ...
-                                    imresize(Ad_skip, 1/scale), ...
-                                    imresize(Ab_skip, 1/scale), ...
-                                    'translation');
-                                fprintf('    Re-ran alignment for score: %.4f\n', skip_score);
-                            end
-                        catch skip_err
-                            fprintf('    Could not recover alignment score: %s\n', skip_err.message);
+                        existingHits  = masterTable.hits(existingIdx);
+                        if ~isnan(existingScore) && existingHits > 0
+                            skipPair = true;
+                            folder_hits = folder_hits + existingHits;
                         end
-                        masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
-                            pairDir, name_root, skip_bx, skip_by, skip_areakm2, skip_hits, skip_score);
-                        fprintf('    Added/updated pairsinfo row: %s\n', name_root);
                     end
+                end
 
+                if skipPair
+                    fprintf('  Skipping (pairsinfo complete, hits=%d): %s\n', existingHits, name_root);
                     cd(folderPath);
                     pairs_done = pairs_done + 1;
                     continue
@@ -255,7 +202,7 @@ for k = 1:length(folders)
                 % Overlap area in km²: count valid pixels × pixel area.
                 % Bounding box overestimates area for tilted (non-N/S) images;
                 % pixel counting gives true coverage regardless of orientation.
-                valid_mask    = double(Ab) ~= 0 & double(Ab) ~= 255;
+                valid_mask    = double(Ab) ~= 0;
                 pixel_area_m2 = Rb.CellExtentInWorldX * Rb.CellExtentInWorldY;
                 areakm2       = sum(valid_mask, 'all') * pixel_area_m2 / 1e6;
 
