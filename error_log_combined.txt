@@ -1,0 +1,96 @@
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_0_75\F18_042970_2481_XN_68N177W_J02_045502_2490_XN_69N178W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_0_75\P17_007512_2432_XN_63N173W_P18_008013_2431_XN_63N173W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\D02_028004_1190_XN_61S175W_D14_032540_1196_XN_60S175W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\D05_029059_1100_XN_70S174W_F09_039305_1104_XN_69S173W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\D05_029059_1100_XN_70S174W_J07_047652_1103_XN_69S174W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G05_020013_1260_XI_54S176W_J03_046096_1260_XN_54S177W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G05_020158_1266_XI_53S175W_G06_020514_1266_XN_53S175W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G11_022492_1188_XN_61S176W_D02_028004_1190_XN_61S175W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G15_023982_1190_XN_61S175W_D02_028004_1190_XN_61S175W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G15_023982_1190_XN_61S175W_D14_032540_1196_XN_60S175W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\G16_024496_1488_XI_31S172W_G18_025353_1488_XI_31S172W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\J04_046241_1145_XN_65S173W_J04_046452_1144_XN_65S173W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\J10_048878_1181_XN_61S172W_J11_049089_1177_XN_62S173W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_-180_-170_-75_0\P13_006247_1114_XN_68S171W_J07_047520_1106_XN_69S170W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\B07_012464_1119_XN_68S356W_J07_047685_1124_XN_67S356W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D04_028657_1101_XN_69S358W_D04_028591_1103_XI_69S358W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D04_028960_1206_XN_59S354W_J04_046419_1197_XN_60S354W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D17_033888_2459_XN_65N278W_D17_034033_2458_XI_65N279W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D17_033888_2459_XN_65N278W_F19_043277_2459_XI_65N278W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D17_033967_2459_XI_65N277W_J01_045110_2459_XN_65N277W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\D18_034191_2442_XI_64N272W_J02_045400_2463_XN_66N273W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\F01_036314_2500_XN_70N273W_J01_045123_2498_XN_69N273W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\F08_038903_1133_XN_66S359W_J03_046116_1131_XN_66S359W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\F08_038903_1133_XN_66S359W_J07_047593_1130_XN_67S359W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\F18_042934_2451_XI_65N273W_J01_045189_2448_XN_64N273W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\G14_023672_1182_XN_61S352W_J06_047131_1181_XI_61S352W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\G18_025294_1318_XI_48S357W_J19_052313_1318_XI_48S357W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\G18_025409_2452_XN_65N273W_J01_045189_2448_XN_64N273W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\J03_046116_1131_XN_66S359W_J07_047593_1130_XN_67S359W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\J04_046498_1413_XN_38S354W_J05_046854_1413_XN_38S354W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\P10_004777_1101_XI_69S358W_D04_028591_1103_XI_69S358W
+Message: Out of memory.
+
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\P15_006794_1412_XI_38S354W_J04_046498_1413_XN_38S354W
+Message: Out of memory.
+

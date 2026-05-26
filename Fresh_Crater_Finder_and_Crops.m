@@ -33,7 +33,7 @@ close all; clear all; clc; warning('off')
 
 %% ── CONFIGURATION ────────────────────────────────────────────────────────────
 
-mainDir    = 'G:\crater_flux_output_folders';
+mainDir    = 'G:\crater_flux_output_folders\Impact_flux_project';
 masterFile = fullfile(mainDir, 'pairsinfo_with_tformscore.csv');
 logFile    = fullfile(mainDir, 'error_log_combined.txt');
 
@@ -101,7 +101,7 @@ end
 folders = dir(mainDir);
 folders = folders([folders.isdir]);
 folders = folders(~ismember({folders.name}, {'.', '..'}));
-folders = folders(startsWith({folders.name}, 'output_')); 
+folders = folders(startsWith({folders.name}, 'output_80_90_0_75')); 
 
 for k = 1:length(folders)
 
@@ -155,25 +155,22 @@ for k = 1:length(folders)
                 cd(pairDir)
 
                 %% ── SKIP CHECK ───────────────────────────────────────────────
-                % Skip only if pairsinfo has a row for this pair with both a
-                % RegistrationScore and hits > 0. Zero-hit rows are re-run in
-                % case the zero was caused by a processing error.
+                % Skip if pairsinfo has a row with both a valid RegistrationScore
+                % and a valid areakm2. Zero-hit pairs are also skipped since
+                % hits=0 can be a correct result and re-running wastes time.
                 skipPair = false;
                 if height(masterTable) > 0
                     existingIdx = find(strcmp(string(masterTable.wholepath), ...
                         string(pairDir)), 1);
                     if ~isempty(existingIdx)
-                        existingScore = masterTable.RegistrationScore(existingIdx);
-                        existingHits  = masterTable.hits(existingIdx);
-                        if ~isnan(existingScore) && existingHits > 0
-                            skipPair = true;
-                            folder_hits = folder_hits + existingHits;
-                        end
+                        existingHits = masterTable.hits(existingIdx);
+                        skipPair = true;
+                        folder_hits = folder_hits + existingHits;
                     end
                 end
 
                 if skipPair
-                    fprintf('  Skipping (pairsinfo complete, hits=%d): %s\n', existingHits, name_root);
+                    %fprintf('  Skipping (pairsinfo complete, hits=%d): %s\n', existingHits, name_root);
                     cd(folderPath);
                     pairs_done = pairs_done + 1;
                     continue
@@ -183,7 +180,7 @@ for k = 1:length(folders)
                 ctx2  = [name_root, '_clippedA.tif'];   % After image
 
                 if ~isfile(ctx1) || ~isfile(ctx2)
-                    fprintf('  Missing tif files for %s, skipping.\n', name_root);
+                    %fprintf('  Missing tif files for %s, skipping.\n', name_root);
                     cd(folderPath);
                     continue
                 end
@@ -261,8 +258,8 @@ for k = 1:length(folders)
                     'centroid', 'area', 'perimeter', ...
                     'eccentricity', 'convexarea', 'eulernumber');
 
-                if isempty(stats)
-                    % No candidates — write empty output files and move on
+                if isempty(stats) || score < 0.25
+                    % No candidates or registration too poor — write empty output files and move on
                     ctxID = name_root;
                     LOC_pass = zeros(0,2); ARE_pass = []; PAR_pass = [];
                     ECC_pass = []; CVA_pass = [];
@@ -389,34 +386,38 @@ for k = 1:length(folders)
 
                 %% ── CROP AND SAVE JPEGS ──────────────────────────────────────
 
-                for j = 1:n_hits
-                    x = round(LOC_pass(j, 1));
-                    y = round(LOC_pass(j, 2));
+                if n_hits < 100
+                    for j = 1:n_hits
+                        x = round(LOC_pass(j, 1));
+                        y = round(LOC_pass(j, 2));
 
-                    x_min = x - half_size + 1;
-                    x_max = x + half_size;
-                    y_min = y - half_size + 1;
-                    y_max = y + half_size;
+                        x_min = x - half_size + 1;
+                        x_max = x + half_size;
+                        y_min = y - half_size + 1;
+                        y_max = y + half_size;
 
-                    % Clamp to image bounds
-                    crop_before = Ab( ...
-                        max(1, y_min):min(size(Ab,1), y_max), ...
-                        max(1, x_min):min(size(Ab,2), x_max));
-                    crop_after = Ad( ...
-                        max(1, y_min):min(size(Ad,1), y_max), ...
-                        max(1, x_min):min(size(Ad,2), x_max));
+                        % Clamp to image bounds
+                        crop_before = Ab( ...
+                            max(1, y_min):min(size(Ab,1), y_max), ...
+                            max(1, x_min):min(size(Ab,2), x_max));
+                        crop_after = Ad( ...
+                            max(1, y_min):min(size(Ad,1), y_max), ...
+                            max(1, x_min):min(size(Ad,2), x_max));
 
-                    % Pad both images symmetrically if hit is near edge
-                    % (Fixed: original script only padded one image per branch)
-                    [crop_before, crop_after] = padCrops( ...
-                        crop_before, crop_after, ...
-                        x, y, size(Ab), size(Ad), half_size, crop_size);
+                        % Pad both images symmetrically if hit is near edge
+                        % (Fixed: original script only padded one image per branch)
+                        [crop_before, crop_after] = padCrops( ...
+                            crop_before, crop_after, ...
+                            x, y, size(Ab), size(Ad), half_size, crop_size);
 
-                    before_path = sprintf('hit_%d_%d_%d_before.jpg', ARE_pass(j), x, y);
-                    after_path  = sprintf('hit_%d_%d_%d_after.jpg',  ARE_pass(j), x, y);
+                        before_path = sprintf('hit_%d_%d_%d_before.jpg', ARE_pass(j), x, y);
+                        after_path  = sprintf('hit_%d_%d_%d_after.jpg',  ARE_pass(j), x, y);
 
-                    imwrite(crop_before, before_path, 'Quality', 80);
-                    imwrite(crop_after,  after_path,  'Quality', 80);
+                        imwrite(crop_before, before_path, 'Quality', 80);
+                        imwrite(crop_after,  after_path,  'Quality', 80);
+                    end
+                else
+                    fprintf('    Skipping JPEG save (%d hits exceeds threshold).\n', n_hits);
                 end
 
                 %% ── UPDATE MASTER PAIRSINFO TABLE ────────────────────────────

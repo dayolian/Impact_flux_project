@@ -62,11 +62,11 @@ def clip_ctx_images(ctxId1, ctxId2, polygon):
         return True
 
 # Variable initializations as needed
-x1 = 80
-y1 = 0
-x2 = 90
-y2 = 75
-tag = 'Area010S'
+x1 = -180
+y1 = -75
+x2 = -170
+y2 = 0
+tag = 'Area180S'
 #str_x1 = 
 
 # String constructions for file names
