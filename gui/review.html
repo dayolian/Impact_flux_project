@@ -31,15 +31,16 @@
     #header .title { font-weight: 700; font-size: 14px; color: #e8ecf4; }
 
     #header .stats {
-      display: flex; gap: 16px; flex: 1;
+      display: flex; gap: 20px; flex: 1;
     }
 
     .stat-chip {
-      display: flex; align-items: center; gap: 5px;
+      display: flex; align-items: center; gap: 6px;
       font-size: 12px; color: #7a8aaa;
     }
 
-    .stat-chip strong { color: #e8ecf4; font-size: 14px; }
+    .stat-chip .fraction { color: #e8ecf4; font-size: 13px; font-weight: 700; }
+    .stat-chip .fraction .denom { color: #556070; font-weight: 400; }
 
     .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .dot.confirmed_hit { background: #3dba5c; }
@@ -202,15 +203,24 @@
   <div class="stats">
     <div class="stat-chip">
       <span class="dot confirmed_hit"></span>
-      <strong id="n-confirmed">—</strong> confirmed
+      <span class="fraction">
+        <span id="seen-confirmed">—</span><span class="denom"> / <span id="total-confirmed">—</span></span>
+      </span>
+      confirmed
     </div>
     <div class="stat-chip">
       <span class="dot potential_hit"></span>
-      <strong id="n-potential">—</strong> potential
+      <span class="fraction">
+        <span id="seen-potential">—</span><span class="denom"> / <span id="total-potential">—</span></span>
+      </span>
+      potential
     </div>
     <div class="stat-chip">
       <span class="dot interesting"></span>
-      <strong id="n-interesting">—</strong> interesting
+      <span class="fraction">
+        <span id="seen-interesting">—</span><span class="denom"> / <span id="total-interesting">—</span></span>
+      </span>
+      interesting
     </div>
   </div>
 </div>
@@ -266,17 +276,16 @@
   function render() {
     const s = appState;
 
-    // Update header counts from current page data (approximation — good enough)
-    const counts = { confirmed_hit: 0, potential_hit: 0, interesting: 0 };
-    s.hits.forEach(h => { if (counts[h.label] !== undefined) counts[h.label]++; });
-    // Show totals from full set via total_hits (we don't have per-label total from server,
-    // so just update what's visible on this page)
-    document.getElementById("n-confirmed").textContent  =
-      s.hits.filter(h => h.label === "confirmed_hit").length || "–";
-    document.getElementById("n-potential").textContent  =
-      s.hits.filter(h => h.label === "potential_hit").length || "–";
-    document.getElementById("n-interesting").textContent =
-      s.hits.filter(h => h.label === "interesting").length || "–";
+    // Per-label seen / total counts
+    const ls = s.label_stats || {};
+    const setCount = (seenId, totalId, lbl) => {
+      const stat = ls[lbl] || { seen: "—", total: "—" };
+      document.getElementById(seenId).textContent  = stat.seen;
+      document.getElementById(totalId).textContent = stat.total;
+    };
+    setCount("seen-confirmed", "total-confirmed", "confirmed_hit");
+    setCount("seen-potential",  "total-potential",  "potential_hit");
+    setCount("seen-interesting","total-interesting","interesting");
 
     // Footer
     document.getElementById("page-info").textContent =

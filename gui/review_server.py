@@ -10,6 +10,7 @@ Prerequisite: run crop_generator.py first to generate 200px crops and lat/lon.
 
 import os
 import csv
+import json
 import urllib.parse
 from flask import Flask, jsonify, send_file, request, abort, send_from_directory
 
@@ -23,9 +24,10 @@ INPUT_FILES = {
     "interesting":    os.path.join(OUTPUT_DIR, "interesting.csv"),
 }
 
-LABEL_ORDER = {"confirmed_hit": 0, "potential_hit": 1, "interesting": 2}
-PAGE_SIZE   = 6   # 3 columns × 2 rows
-IMG_ROOT    = os.path.normpath(OUTPUT_DIR)
+LABEL_ORDER    = {"confirmed_hit": 0, "potential_hit": 1, "interesting": 2}
+PAGE_SIZE      = 12   # 3 columns × 4 rows
+IMG_ROOT       = os.path.normpath(OUTPUT_DIR)
+PROGRESS_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_progress.json")
 
 # ─── Flask ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,24 @@ app = Flask(__name__, static_folder=GUI_DIR, static_url_path="")
 
 all_hits = []   # combined ordered list of hit dicts (same objects as in CSV rows)
 page_idx = 0
+
+# ─── Progress persistence ────────────────────────────────────────────────────
+
+def load_progress():
+    """Load saved page position from disk, default to 0."""
+    global page_idx
+    try:
+        with open(PROGRESS_FILE) as f:
+            page_idx = int(json.load(f).get("page_idx", 0))
+        print(f"Resuming at page {page_idx + 1}.")
+    except (FileNotFoundError, ValueError, KeyError):
+        page_idx = 0
+
+
+def save_progress():
+    """Write current page position to disk."""
+    with open(PROGRESS_FILE, "w") as f:
+        json.dump({"page_idx": page_idx}, f)
 
 # ─── CSV I/O ─────────────────────────────────────────────────────────────────
 
@@ -145,11 +165,21 @@ def api_state():
             "after_url":  after_url,
         })
 
+    # Per-label totals and how many have been paged past (on completed pages)
+    seen_cutoff = page_idx * PAGE_SIZE
+    label_stats = {}
+    for lbl in LABEL_ORDER:
+        total = sum(1 for h in all_hits if h.get("label") == lbl)
+        seen  = sum(1 for i, h in enumerate(all_hits)
+                    if h.get("label") == lbl and i < seen_cutoff)
+        label_stats[lbl] = {"seen": seen, "total": total}
+
     return jsonify({
-        "page":        page_idx,
-        "total_pages": total_pages(),
-        "total_hits":  len(all_hits),
-        "hits":        hits_data,
+        "page":         page_idx,
+        "total_pages":  total_pages(),
+        "total_hits":   len(all_hits),
+        "label_stats":  label_stats,
+        "hits":         hits_data,
     })
 
 
@@ -176,6 +206,7 @@ def api_navigate():
         page_idx += 1
     elif direction == "prev" and page_idx > 0:
         page_idx -= 1
+    save_progress()
     return jsonify({"ok": True, "page": page_idx})
 
 
@@ -183,5 +214,8 @@ def api_navigate():
 
 if __name__ == "__main__":
     load_hits()
+    load_progress()
+    # Clamp in case total hits changed since last session
+    page_idx = min(page_idx, total_pages() - 1)
     print("Open http://localhost:5001 in your browser.")
     app.run(debug=False, host="127.0.0.1", port=5001)
