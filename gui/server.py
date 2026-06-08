@@ -8,8 +8,18 @@ Then: open http://localhost:5000
 import os
 import csv
 import urllib.parse
+from collections import deque
 from datetime import datetime
 from flask import Flask, jsonify, send_file, request, abort, send_from_directory
+
+try:
+    from PIL import Image
+    import numpy as np
+    IMAGE_FILTER_AVAILABLE = True
+except ImportError:
+    IMAGE_FILTER_AVAILABLE = False
+    print("WARNING: Pillow/numpy not found — black-edge filtering disabled. "
+          "Run: pip install pillow numpy")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +36,12 @@ OUT_COLS      = ["wholepath", "pair_name", "hit_prefix", "ARE", "x", "y", "label
 PAGE_SIZE     = 18
 VALID_LABELS  = set(OUTPUT_FILES.keys())
 
+# Black-edge filtering: skip hits where the center pixel is black (< BLACK_THRESHOLD)
+# and the connected black region containing it covers more than BLACK_COVERAGE of the image.
+# Threshold > 0 accounts for JPEG compression softening true-zero nodata pixels.
+BLACK_THRESHOLD = 10
+BLACK_COVERAGE  = 0.50
+
 # Allowed path prefixes for image serving (security check)
 IMG_ROOTS = [
     os.path.normpath(OUTPUT_DIR),
@@ -39,13 +55,14 @@ app = Flask(__name__, static_folder=GUI_DIR, static_url_path="")
 
 # ─── Global state ────────────────────────────────────────────────────────────
 
-all_rows   = []  # complete list of dicts from master CSV (every row)
-pairs      = []  # filtered subset: hits > 0 (same dict objects as in all_rows)
-pair_idx   = 0   # current position in pairs[]
-page_idx   = 0   # current page within the current pair's hits
-hits       = []  # hits for current pair, sorted descending by ARE
-labeled    = {}  # prefix -> label  (in-memory; flushed to disk on next-pair)
-prev_saved = {}  # prefix -> label  (already written to output CSVs in prior sessions)
+all_rows         = []  # complete list of dicts from master CSV (every row)
+pairs            = []  # filtered subset: hits > 0 (same dict objects as in all_rows)
+pair_all_indices = []  # pair_all_indices[i] = index of pairs[i] inside all_rows
+pair_idx         = 0   # current position in pairs[]
+page_idx         = 0   # current page within the current pair's hits
+hits             = []  # hits for current pair, sorted descending by ARE
+labeled          = {}  # prefix -> label  (in-memory; flushed to disk on next-pair)
+prev_saved       = {}  # prefix -> label  (already written to output CSVs in prior sessions)
 
 # ─── Master CSV helpers ──────────────────────────────────────────────────────
 
@@ -125,6 +142,60 @@ def flush_labels_to_csv():
             with open(OUTPUT_FILES[lbl], "a", newline="", encoding="utf-8") as f:
                 csv.DictWriter(f, fieldnames=OUT_COLS).writerows(rows)
 
+# ─── Black-edge filtering ────────────────────────────────────────────────────
+
+def is_black_edge_hit(img_path):
+    """
+    Return True if the center pixel of the crop is exactly black (== 0)
+    AND the connected region of black pixels containing it covers more
+    than BLACK_COVERAGE of the image.
+
+    This catches crops where the detected hit lands in the nodata padding
+    at the tilted edge of the orbital image strip.
+    Fails open: if the image can't be read, the hit is kept for review.
+    """
+    if not IMAGE_FILTER_AVAILABLE:
+        return False
+    try:
+        img = Image.open(img_path).convert("L")
+        arr = np.array(img, dtype=np.uint8)
+        h, w = arr.shape
+        cy, cx = h // 2, w // 2
+
+        # Center pixel must be black
+        if arr[cy, cx] >= BLACK_THRESHOLD:
+            return False
+
+        # Quick bail: total black pixels must be enough to exceed coverage
+        black = arr < BLACK_THRESHOLD
+        if black.sum() < h * w * BLACK_COVERAGE:
+            return False
+
+        # Flood-fill from center through connected black pixels
+        visited = np.zeros((h, w), dtype=bool)
+        q = deque([(cy, cx)])
+        visited[cy, cx] = True
+        while q:
+            y, x = q.popleft()
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < h and 0 <= nx < w and arr[ny, nx] < BLACK_THRESHOLD and not visited[ny, nx]:
+                    visited[ny, nx] = True
+                    q.append((ny, nx))
+
+        return visited.sum() / (h * w) > BLACK_COVERAGE
+
+    except Exception:
+        return False  # if anything fails, don't suppress the hit
+
+
+def should_skip_hit(pair_path, prefix):
+    """Return True if either crop image is a black-edge hit."""
+    before = os.path.join(pair_path, f"{prefix}_before.jpg")
+    after  = os.path.join(pair_path, f"{prefix}_after.jpg")
+    return is_black_edge_hit(before) or is_black_edge_hit(after)
+
+
 # ─── Hit loading ─────────────────────────────────────────────────────────────
 
 def load_hits_for_pair(pair_row):
@@ -149,6 +220,11 @@ def load_hits_for_pair(pair_row):
             except ValueError:
                 continue
     result.sort(key=lambda h: h["ARE"], reverse=True)
+
+    # Filter out hits where a crop image is dominated by border-connected nodata black
+    pair_path = pair_row["wholepath"]
+    result = [h for h in result if not should_skip_hit(pair_path, h["prefix"])]
+
     return result
 
 # ─── Navigation ──────────────────────────────────────────────────────────────
@@ -191,22 +267,34 @@ def total_pages():
     return max(1, (len(hits) + PAGE_SIZE - 1) // PAGE_SIZE)
 
 
-def done_pair_count():
-    return sum(1 for p in pairs if p.get("review_status", "").strip().lower() == "done")
+def overall_progress():
+    """
+    Return (done_overall, total_all) for the progress bar.
+
+    done_overall = number of rows in all_rows that appear before the current
+    pair's position in the list. Every row before the current position has
+    been passed: zero-hit rows implicitly, hit-bearing rows explicitly reviewed.
+    Zero-hit rows that come AFTER the current position are not counted yet.
+    """
+    if pair_idx >= len(pairs):
+        return len(all_rows), len(all_rows)
+    return pair_all_indices[pair_idx], len(all_rows)
 
 # ─── Startup ─────────────────────────────────────────────────────────────────
 
 def init():
-    global all_rows, pairs, pair_idx, prev_saved
+    global all_rows, pairs, pair_all_indices, pair_idx, prev_saved
     ensure_output_files()
     prev_saved = load_prev_saved()
     all_rows   = load_master()
     # pairs references the SAME dict objects as all_rows, so in-place edits propagate
-    pairs      = [r for r in all_rows if int(float(r.get("hits", 0) or 0)) > 0]
-    pair_idx   = 0
+    pairs            = [r for r in all_rows if int(float(r.get("hits", 0) or 0)) > 0]
+    pair_all_indices = [i for i, r in enumerate(all_rows)
+                        if int(float(r.get("hits", 0) or 0)) > 0]
+    pair_idx = 0
     advance_pair()
-    print(f"Loaded {len(pairs)} pairs with hits. "
-          f"{done_pair_count()} already reviewed.")
+    done_hit = sum(1 for p in pairs if p.get("review_status", "").strip().lower() == "done")
+    print(f"Loaded {len(pairs)} pairs with hits. {done_hit} already reviewed.")
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
@@ -229,9 +317,9 @@ def serve_image():
 
 @app.route("/api/state")
 def api_state():
-    n_done = done_pair_count()
+    done_overall, total_all = overall_progress()
     if pair_idx >= len(pairs):
-        return jsonify({"done": True, "total_pairs": len(pairs), "done_pairs": n_done})
+        return jsonify({"done": True, "done_overall": done_overall, "total_all": total_all})
 
     pair      = pairs[pair_idx]
     pair_path = pair["wholepath"]
@@ -258,16 +346,19 @@ def api_state():
         reg = str(reg)
 
     return jsonify({
-        "done":        False,
-        "pair_name":   os.path.basename(pair_path.rstrip("\\/")),
-        "pair_idx":    pair_idx,
-        "total_pairs": len(pairs),
-        "done_pairs":  n_done,
-        "page":        page_idx,
-        "total_pages": total_pages(),
-        "total_hits":  len(hits),
-        "reg_score":   reg,
-        "hits":        hits_data,
+        "done":            False,
+        "pair_name":       os.path.basename(pair_path.rstrip("\\/")),
+        # Label stat: completed hit-pairs / total hit-pairs
+        "pair_idx":        pair_idx,           # number of hit-pairs completed so far
+        "total_hit_pairs": len(pairs),
+        # Progress bar: rows passed in full list / all rows
+        "done_overall":    done_overall,
+        "total_all":       total_all,
+        "page":            page_idx,
+        "total_pages":     total_pages(),
+        "total_hits":      len(hits),
+        "reg_score":       reg,
+        "hits":            hits_data,
     })
 
 

@@ -359,6 +359,9 @@
       grid.style.display = "none";
       doneScr.classList.add("visible");
       footer.style.display = "none";
+      document.getElementById("progress-bar-fill").style.width = "100%";
+      document.getElementById("progress-label").textContent =
+        `${s.done_overall} / ${s.total_all} done`;
       return;
     }
 
@@ -369,16 +372,16 @@
     // Header stats
     document.getElementById("pair-name").textContent = s.pair_name;
     document.getElementById("stat-pair").textContent =
-      `${s.pair_idx + 1} / ${s.total_pairs}`;
+      `${s.pair_idx} / ${s.total_hit_pairs}`;
     document.getElementById("stat-page").textContent =
       `${s.page + 1} / ${s.total_pages}`;
     document.getElementById("stat-hits").textContent = s.total_hits;
     document.getElementById("stat-reg").textContent  = s.reg_score;
 
-    const pct = s.total_pairs > 0 ? (s.done_pairs / s.total_pairs) * 100 : 0;
+    const pct = s.total_all > 0 ? (s.done_overall / s.total_all) * 100 : 0;
     document.getElementById("progress-bar-fill").style.width = pct + "%";
     document.getElementById("progress-label").textContent =
-      `${s.done_pairs} / ${s.total_pairs} done`;
+      `${s.done_overall} / ${s.total_all} done`;
 
     // Nav buttons
     const isLastPage = (s.page + 1 >= s.total_pages);
