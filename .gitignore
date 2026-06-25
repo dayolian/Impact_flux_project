@@ -9,3 +9,9 @@ mars_mro_ctx_edr*
 
 # Ignore the CTX intersections shapefile
 CTX_pair_intersections*
+
+# Ignore generated figures (not for version control)
+figures/
+
+# Ignore Claude Code internal worktrees
+.claude/worktrees/

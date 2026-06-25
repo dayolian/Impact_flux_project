@@ -94,3 +94,16 @@ Message: Out of memory.
 Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_80_90_0_75\P15_006794_1412_XI_38S354W_J04_046498_1413_XN_38S354W
 Message: Out of memory.
 
+Error in pair: G:\crater_flux_output_folders\Impact_flux_project\output_new_80_90_-75_0\F10_039533_1113_XI_68S277W_K07_055963_1112_XN_68S278W
+Message: Out of memory.
+
+Error in folder: G:\crater_flux_output_folders\Impact_flux_project\output_new_0_10_-75_0
+Message: Unable to open file 'G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_with_tformscore.csv' for writing:
+
+Permission denied
+
+Error in folder: G:\crater_flux_output_folders\Impact_flux_project\output_new_0_10_0_75
+Message: Unable to open file 'G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_with_tformscore.csv' for writing:
+
+Permission denied
+

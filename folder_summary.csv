@@ -2,3 +2,7 @@ output_folder,total_pairs,has_candidates_t,has_both
 output_-180_-170_0_75,8664,0,0
 output_-180_-170_-75_0,24411,0,0
 output_80_90_0_75,15895,0,0
+output_new_80_90_0_75,10043,0,0
+output_new_80_90_-75_0,13149,0,0
+output_new_0_10_-75_0,2328,0,0
+output_new_0_10_0_75,2233,0,0
