@@ -101,7 +101,7 @@ end
 folders = dir(mainDir);
 folders = folders([folders.isdir]);
 folders = folders(~ismember({folders.name}, {'.', '..'}));
-folders = folders(startsWith({folders.name}, 'output_new_130')); 
+folders = folders(startsWith({folders.name}, 'output_new_-180_-170_0_75'));
 
 for k = 1:length(folders)
 
@@ -239,6 +239,16 @@ for k = 1:length(folders)
                     imresize(Ab, 1/scale), ...
                     'translation');
 
+                if score < 0.25
+                    % Poor registration — skip all further processing, delete folder.
+                    masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
+                        pairDir, name_root, bx, by, areakm2, 0, score);
+                    cd(folderPath);
+                    rmdir(pairDir, 's');
+                    pairs_done = pairs_done + 1;
+                    continue
+                end
+
                 tformEst.T(3, 1:2) = tformEst.T(3, 1:2) .* scale;
                 Rf = imref2d(size(Ab));
                 Ad = imwarp(Ad, tformEst, 'OutputView', Rf);
@@ -262,28 +272,12 @@ for k = 1:length(folders)
                     'centroid', 'area', 'perimeter', ...
                     'eccentricity', 'convexarea', 'eulernumber');
 
-                if isempty(stats) || score < 0.25
-                    % No candidates or registration too poor — write empty output files and move on
-                    ctxID = name_root;
-                    LOC_pass = zeros(0,2); ARE_pass = []; PAR_pass = [];
-                    ECC_pass = []; CVA_pass = [];
-                    save('candidates_t.mat', 'ctxID', 'bx', 'by', ...
-                        'LOC_pass', 'ARE_pass', 'PAR_pass', 'ECC_pass', 'CVA_pass');
-                    emptyTargets = table(zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), zeros(0,1), ...
-                        'VariableNames', {'LOC_pass_1','LOC_pass_2','ARE_pass','PAR_pass','CVA_pass','ECC_pass'});
-                    writetable(emptyTargets, 'targets.csv');
-                    emptyHitList = table(cell(0,1), zeros(0,1), 'VariableNames', {'prefix','processed'});
-                    writetable(emptyHitList, 'hit_list.csv');
+                if isempty(stats)
+                    % No hits — update master table only, no file writes.
+                    % Row in CSV is sufficient for skip check on re-run.
                     masterTable = updateMasterTable(masterTable, pairsinfo_cols, ...
                         pairDir, name_root, bx, by, areakm2, 0, score);
-
-                    % Poor registration: delete clipped tiffs to recover disk space.
-                    % Only fires for score < 0.25; isempty(stats) with good score
-                    % is a valid zero-hit result worth keeping.
                     cd(folderPath);
-                    if score < 0.25
-                        rmdir(pairDir, 's');
-                    end
                     pairs_done = pairs_done + 1;
                     continue
                 end
