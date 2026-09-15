@@ -66,8 +66,8 @@ CLIP_METRES = 1200.0
 HIRISE_SCALE = 0.25        # m/px, standard HiRISE RED channel
 R_MARS       = 3_396_190.0  # IAU 2000 sphere radius, metres
 
-# ODE API
-ODE_URL   = "https://ode.rsl.wustl.edu/mars/lroproductsearch.aspx"
+# ODE REST API v2  (results=all is the only way to get product records)
+ODE_URL   = "https://oderest.rsl.wustl.edu/live2/"
 ODE_DELAY = 0.5   # seconds between requests
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -102,12 +102,44 @@ def metres_to_deg_lon(m, lat_deg):
     return math.degrees(m / (R_MARS * math.cos(lat_rad))) if abs(lat_deg) < 89.9 else 0.0
 
 
+def _parse_label(label_lines):
+    """Extract key fields from a PDS label line list."""
+    result = {}
+    for line in label_lines:
+        s = str(line).strip()
+        for key in ("PRODUCT_ID", "OBSERVATION_ID", "START_TIME",
+                    "CENTER_LATITUDE", "CENTER_LONGITUDE"):
+            if s.startswith(key + " ") or s.startswith(key + "="):
+                val = s.split("=", 1)[1].strip().strip('"').split("<")[0].strip()
+                result[key] = val
+    return result
+
+
+def _hirise_urls(obs_id):
+    """
+    Construct PDS browse and JP2 (RED channel) URLs from a HiRISE observation ID.
+    obs_id format: ESP_013329_1745  or  PSP_001234_1750
+    """
+    parts  = obs_id.split("_")
+    phase  = parts[0]               # ESP or PSP
+    orbit  = int(parts[1])
+    lo     = (orbit // 100) * 100
+    odir   = f"ORB_{lo:06d}_{lo+99:06d}"
+
+    base_pds    = f"https://hirise-pds.lpl.arizona.edu/PDS/RDR/{phase}/{odir}/{obs_id}"
+    base_extras = f"https://hirise.lpl.arizona.edu/PDS/EXTRAS/RDR/{phase}/{odir}/{obs_id}"
+
+    jp2_url    = f"{base_pds}/{obs_id}_RED.JP2"
+    browse_url = f"{base_extras}/{obs_id}_RED.browse.jpg"
+    return jp2_url, browse_url
+
+
 def ode_query(lat, lon, margin=BBOX_MARGIN):
     """
-    Query ODE for HiRISE RDR products overlapping the bounding box.
-    Returns a list of product dicts, or [] on failure.
+    Query ODE REST API v2 for HiRISE RDR products overlapping a bounding box.
+    Returns a list of cleaned product dicts with keys:
+      pdsid, obs_id, date, center_lat, center_lon, jp2_url, browse_url
     """
-    lon360 = lon_180_to_360(lon)
     west   = lon_180_to_360(lon - margin)
     east   = lon_180_to_360(lon + margin)
     minlat = lat - margin
@@ -123,47 +155,65 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
         "minlat":     f"{minlat:.4f}",
         "maxlat":     f"{maxlat:.4f}",
         "output":     "JSON",
-        "results":    "200",
+        "results":    "all",   # only "all" or "C" (count) return data
     }
     url = ODE_URL + "?" + urllib.parse.urlencode(params)
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "hirise_lookup/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-        text = raw.decode("utf-8-sig")
-        if not text.strip():
-            print(f"    ODE returned empty response")
-            print(f"    URL was: {url}")
-            return []
-        data = json.loads(text)
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8-sig"))
     except urllib.error.URLError as e:
         print(f"    ODE request failed: {e}")
-        return []
-    except json.JSONDecodeError as e:
-        print(f"    ODE parse error: {e}")
-        # Print first 500 chars of raw response to help diagnose
-        try:
-            print(f"    Raw response (first 500 chars): {raw[:500]}")
-        except Exception:
-            pass
-        print(f"    URL was: {url}")
         return []
     except Exception as e:
         print(f"    ODE error: {e}")
         return []
 
     try:
-        status = data.get("ODEResults", {}).get("Status", "")
-        if status != "Success":
+        if data.get("ODEResults", {}).get("Status") != "Success":
             return []
         raw = data["ODEResults"]["Products"]["Product"]
-        # ODE returns a dict (not list) when there is exactly one result
         if isinstance(raw, dict):
             raw = [raw]
-        return raw
     except (KeyError, TypeError):
-        return []
+        return []   # 0 results
+
+    products = []
+    for item in raw:
+        lines = item.get("label", {}).get("Line", [])
+        fields = _parse_label(lines)
+
+        obs_id = fields.get("OBSERVATION_ID", "")
+        pds_id = fields.get("PRODUCT_ID", obs_id)
+
+        # Keep only the RED channel products (skip COLOR, IRB)
+        if pds_id.endswith("_COLOR") or pds_id.endswith("_IRB"):
+            continue
+
+        start = fields.get("START_TIME", "")
+        try:
+            c_lat = float(fields.get("CENTER_LATITUDE", "nan").replace("<DEG>", ""))
+            c_lon = float(fields.get("CENTER_LONGITUDE", "nan").replace("<DEG>", ""))
+        except ValueError:
+            c_lat = c_lon = float("nan")
+
+        if not obs_id:
+            continue
+
+        jp2_url, browse_url = _hirise_urls(obs_id)
+        products.append({
+            "pdsid":      pds_id,
+            "obs_id":     obs_id,
+            "_date":      parse_date(start),
+            "center_lat": c_lat,
+            "center_lon": c_lon,
+            "jp2_url":    jp2_url,
+            "browse_url": browse_url,
+            "UTC_start_time": start,
+        })
+
+    return products
 
 
 def select_product(products, before_date, strategy):
@@ -173,10 +223,6 @@ def select_product(products, before_date, strategy):
     """
     if not products:
         return None, "no HiRISE products found in search box"
-
-    # Attach parsed dates
-    for p in products:
-        p["_date"] = parse_date(p.get("UTC_start_time", ""))
 
     dated = [p for p in products if p["_date"] is not None]
 
@@ -390,23 +436,24 @@ for kw in KEYWORDS:
 
         # List all found products
         if products:
-            summary_lines.append("All HiRISE products in search box:")
-            for p in sorted(products,
-                            key=lambda x: x.get("UTC_start_time", ""),
-                            reverse=True):
-                pid   = p.get("pdsid", "?")
-                pdate = p.get("UTC_start_time", "?")[:10]
+            summary_lines.append("All HiRISE observations in search box (RED channel):")
+            for p in sorted(products, key=lambda x: x.get("UTC_start_time", ""), reverse=True):
+                pid    = p.get("obs_id", "?")
+                pdate  = p.get("UTC_start_time", "?")[:10]
+                clat   = p.get("center_lat", float("nan"))
+                clon   = p.get("center_lon", float("nan"))
                 marker = " ← SELECTED" if (chosen and p is chosen) else ""
-                summary_lines.append(f"  {pdate}  {pid}{marker}")
+                summary_lines.append(f"  {pdate}  {pid}  (ctr {clat:.2f},{clon:.2f}){marker}")
 
         if chosen:
             summary_lines += [
                 "",
                 "Selected product details:",
-                f"  Product ID:   {chosen.get('pdsid', '')}",
-                f"  Date:         {chosen.get('UTC_start_time', '')[:10]}",
-                f"  Product URL:  {chosen.get('Product_file_url', '')}",
-                f"  Browse URL:   {chosen.get('Browse_image_url', '')}",
+                f"  Observation ID: {chosen.get('obs_id', '')}",
+                f"  Date:           {chosen.get('UTC_start_time', '')[:10]}",
+                f"  Centre lat/lon: {chosen.get('center_lat','')}, {chosen.get('center_lon','')}",
+                f"  JP2 URL:        {chosen.get('jp2_url', '')}",
+                f"  Browse URL:     {chosen.get('browse_url', '')}",
             ]
 
         with open(os.path.join(hit_dir, "summary.txt"), "w", encoding="utf-8") as f:
@@ -416,7 +463,7 @@ for kw in KEYWORDS:
             continue
 
         # ── try full-res clip via vsicurl ────────────────────────────────────
-        product_url = chosen.get("Product_file_url", "")
+        product_url = chosen.get("jp2_url", "")
         out_tif     = os.path.join(hit_dir, "hirise_clip.tif")
 
         if product_url and not os.path.exists(out_tif):
@@ -432,7 +479,7 @@ for kw in KEYWORDS:
             print(f"    hirise_clip.tif already exists, skipping")
 
         # ── download browse image as fallback / context ──────────────────────
-        browse_url = chosen.get("Browse_image_url", "")
+        browse_url = chosen.get("browse_url", "")
         out_browse = os.path.join(hit_dir, "hirise_browse.jpg")
 
         if browse_url and not os.path.exists(out_browse):
