@@ -26,7 +26,7 @@ INPUT_FILES = {
 
 LABEL_ORDER    = {"confirmed_hit": 0, "potential_hit": 1, "interesting": 2}
 PAGE_SIZE      = 12   # 3 columns × 4 rows
-IMG_ROOT       = os.path.normpath(OUTPUT_DIR)
+IMG_ROOTS      = [os.path.normpath(OUTPUT_DIR), os.path.normpath(r"F:\\")]
 PROGRESS_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_progress.json")
 
 # ─── Flask ───────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ def index():
 def serve_image():
     raw  = request.args.get("path", "")
     norm = os.path.normpath(raw)
-    if not norm.startswith(IMG_ROOT):
+    if not any(norm.startswith(root) for root in IMG_ROOTS):
         abort(403)
     if not os.path.isfile(norm):
         abort(404)
