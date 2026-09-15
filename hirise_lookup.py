@@ -130,7 +130,7 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "hirise_lookup/1.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8-sig"))
     except urllib.error.URLError as e:
         print(f"    ODE request failed: {e}")
         return []
