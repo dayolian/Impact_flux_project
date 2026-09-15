@@ -15,3 +15,6 @@ figures/
 
 # Ignore Claude Code internal worktrees
 .claude/worktrees/
+
+# Ignore intermediate/backup CSV files
+csv_backups/

@@ -33,7 +33,49 @@ heavily and human validation is the final filter.
 - `CTX_pair_intersections.shp` — full-planet CTX image overlap shapefile
 
 ### Subfolder: Impact_flux_project\
-Contains the scripts, this CLAUDE.md, and the GitHub repo. 
+Contains the scripts, this CLAUDE.md, and the GitHub repo.
+
+Output CSVs from the validation GUIs (confirmed_hits.csv, potential_hits.csv, interesting.csv)
+are written to `G:\crater_flux_output_folders\` (not inside Impact_flux_project).
+
+---
+
+## Master CSV Files (Source of Truth)
+
+All pairsinfo CSV files live in `G:\crater_flux_output_folders\Impact_flux_project\`.
+
+### Canonical files — use these for all analysis
+
+| File | Rows | Description |
+|------|------|-------------|
+| `pairsinfo_alldata_2006-2026.csv` | 401,649 | **ALL** processed pairs, both eras, no filters. Raw pipeline output. Use for computing statistics on total surveyed area, detection rates, and filtering efficiency. |
+| `pairsinfo_reviewed_2006-2026.csv` | 43,440 | Pairs that passed review thresholds (hits ≤ 20, RegistrationScore ≥ 0.25, areakm2 > 0) and were shown to the human reviewer. Has `review_status`, `datetime1`, `datetime2`, `days_between` columns. Use for all science analysis. |
+
+The ~358k row difference between the two files represents pairs excluded by filters:
+zero-hit pairs, poorly registered pairs (score < 0.25), high-hit-count pairs (> 20 hits,
+likely noise), and zero-area pairs.
+
+### Intermediate / record-keeping files — do not use for analysis
+
+| File | Rows | Notes |
+|------|------|-------|
+| `pairsinfo_combo_master_alldata_to2018.csv` | 140,389 | Raw output, 2006–2018 data only. Combined into canonical alldata file. |
+| `pairsinfo_combo_master_alldata_2018-2026.csv` | 261,260 | Raw output, 2018–2026 data only (G: + F: drives). Combined into canonical alldata file. |
+| `pairsinfo_with_tformscore_2018-2026_Gdrive-data.csv` | 160,726 | Raw output, 2018–2026 G: drive only (subset of above, pre-combination). |
+| `pairsinfo_combo_master_max20hits_withdt.csv` | 19,195 | First GUI round (2006–2018), reviewed. Combined into canonical reviewed file. |
+| `pairsinfo_combo_master_max20hits_withdt_2018-2026.csv` | 24,245 | Second GUI round (2018–2026), reviewed. Combined into canonical reviewed file. |
+| `pairsinfo_combo_master_max20hits - Copy - all regis scores.csv` | 57,427 | Intermediate: hits ≤ 20 filtered but before RegistrationScore ≥ 0.25 cut was applied. Kept for record. |
+
+### Dataset coverage
+- **2006–2018**: pairs where both CTX images were acquired before the dataset cutoff
+- **2018–2026**: pairs where at least one image was acquired after the cutoff
+- The two eras are non-overlapping (no duplicate pairs between them)
+- 2018–2026 data was split across G: and F: drives for processing speed; both are included
+  in the combined files
+
+---
+
+## Pipeline (Fresh_Crater_Finder_and_Crops.m)
 
 ## GUI Task (NEXT — build this)
 
