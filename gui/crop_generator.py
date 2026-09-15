@@ -18,6 +18,7 @@ import math
 import glob
 import numpy as np
 from PIL import Image
+import rasterio
 
 # CTX GeoTIFFs can exceed Pillow's default decompression-bomb limit (~179 MP).
 # These are known trusted scientific files, so we disable the check.
@@ -191,8 +192,20 @@ def process_csv(csv_path, label):
                     row["lon"]   = f"{lon:.5f}"
                 except Exception as e:
                     print(f"\n    WARNING: lat/lon failed for {prefix}: {e}")
+            elif tif_b:
+                # Fallback for rasterio-created GeoTIFFs (no .tfw sidecar —
+                # georeferencing is embedded in the file instead).
+                try:
+                    with rasterio.open(tif_b) as src:
+                        t = src.transform
+                    tfw_vals     = [t.a, t.d, t.b, t.e, t.c, t.f]
+                    lon, lat     = pixel_to_lonlat(col, row_px, tfw_vals)
+                    row["lat"]   = f"{lat:.5f}"
+                    row["lon"]   = f"{lon:.5f}"
+                except Exception as e:
+                    print(f"\n    WARNING: lat/lon (rasterio fallback) failed for {prefix}: {e}")
             else:
-                print(f"\n    WARNING: no .tfw found in {pair_path}")
+                print(f"\n    WARNING: no .tfw or GeoTIFF found in {pair_path}")
 
         print(" ✓")
 
