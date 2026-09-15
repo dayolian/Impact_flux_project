@@ -62,11 +62,11 @@ def clip_ctx_images(ctxId1, ctxId2, polygon):
         return True
 
 # Variable initializations as needed
-x1 = 80
-y1 = 0
-x2 = 90
-y2 = 75
-tag = 'Area80N'
+x1 = -180
+y1 = -75
+x2 = -170
+y2 = 0
+tag = 'Area180S'
 #str_x1 = 
 
 # String constructions for file names
@@ -262,8 +262,8 @@ for pair, polygon in pair_to_polygon.items():
 
 
 #Temp comment out while trblshting
-#for fid in unique_fids:
-#	os.remove(fid_to_ctxid[fid] + '.tiff')
+for fid in unique_fids:
+	os.remove(fid_to_ctxid[fid] + '.tiff')
 
 os.chdir(direct + '\\' + path)
 

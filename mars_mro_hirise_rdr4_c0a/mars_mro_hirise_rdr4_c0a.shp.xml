@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!--<!DOCTYPE metadata SYSTEM "http://www.esri.com/metadata/esriprof80.dtd">-->
+<metadata xml:lang="en">
+	<Esri>
+		<CreaDate>202666/2/2026 12:00:00 AM</CreaDate>
+		<CreaTime>94716</CreaTime>
+		<DataProperties><lineage><Process ToolSource="c:\program files\arcgis\pro\Resources\ArcToolbox\toolboxes\Data Management Tools.tbx\RepairGeometry" Date="20260602" Time="094730">RepairGeometry //phobos/projects/ode4/ode-live/ode_mars/processed_data/derived_products/coverageshapefilesfull/mars/mro/hirise/rdr4/mars_mro_hirise_rdr4_c0a.shp DELETE_NULL Esri</Process><Process ToolSource="c:\program files\arcgis\pro\Resources\ArcToolbox\toolboxes\Data Management Tools.tbx\AddSpatialIndex" Date="20260602" Time="094736">AddSpatialIndex //phobos/projects/ode4/ode-live/ode_mars/processed_data/derived_products/coverageshapefilesfull/mars/mro/hirise/rdr4/mars_mro_hirise_rdr4_c0a.shp 0 0 0</Process></lineage></DataProperties></Esri>
+	<dataIdInfo>
+		<idCitation>
+			<resTitle>NASA's Planetary Data System Geosciences Node Orbital Data Explorer (ODE) Product Coverage Shapefile for mars_mro_hirise_rdr4_c0a</resTitle>
+		</idCitation>
+		<idPurp>NASA's Planetary Data System Geosciences Node Orbital Data Explorer (ODE) Product Coverage Shapefile for mars_mro_hirise_rdr4_c0a</idPurp>
+		<idAbs>This is the product coverage for 
+all products of type RDR4 from 
+the HIRISE instrument
+on instrument host MRO
+viewing Mars.  
+All latitudes are planetocentric.  
+This coverage is valid for center longitude 0 cylindrical projections with positive east, -180 to 180, longitudes. 
+The shapefile was generated from PDS Geosciences Orbital Data Explorer (ODE) on 2026-06-02T09:47:16.112.  
+ Links: 
+   NASA Planetary Data System: https://pds.jpl.nasa.gov/
+   Geosciences Node: https://pds-geosciences.wustl.edu/
+   Orbital Data Explorer: https://ode.rsl.wustl.edu/
+   A direct link to ODE's product and files pages can be found in 
+    the ODE_external_urlField and ODE_Files_URLField columns of the attribute table 
+ Fields: 
+  CenterLat Field - Footprint Center Planetocentric Latitude
+  CenterLon Field - Footprint Center East Longitude
+  MaxLat Field - Maximum Planetocentric Latitude
+  MinLat Field - Minimum Planetocentric Latitude
+  EastLon Field - Easternmost East Longitude
+  WestLon Field - Westernmost East Longitude
+  EmAngle Field - Emission Angle (-1 if there is no valid emission angle value)
+  InAngle Field - Incidence Angle (-1 if there is no valid incidence angle value)
+  PhAngle Field - Phase Angle (-1 if there is no valid phase angle value)
+  SolLong Field - Solar Longitude (-1 if there is no valid solar longitude value)
+  NPoleState Field - Flag to indicate that the footprint covers the target north pole (T or F)
+  SPoleState Field - Flag to indicate that the footprint covers the target south pole (T or F)
+  Target Field - Observation target - example Mars or Mercury
+  ProductId Field - PDS Product Id
+  ProductLid Field - PDS Product Lid
+  ProdVer Field - Product Version Id
+  DataSetId Field - PDS Data Set Id
+  InstHostId Field - Instrument Id Host
+  InstId Field - Instrument Id
+  UTCstart Field - Observation Start time in Utc
+  UTCend Field - Observation End time in Utc
+  PDSVolId Field - PDS Volume Id
+  ProdType Field - ODE Product Type (example: RDR - Reduced Data Record)
+  CreateDate Field - Product Creation Time in Utc
+  ShpSource Field - Source of the product footprint (example: PDS Label, inIndex File, Data File, etc.)
+  ExtURL Field - URL to an external URL that holds information about this product (optional)
+  Ext2URL Field - URL to a second external URL that holds information about this product (optional).  For HiRISE, this is the JPIP address
+  Ext3URL Field - URL to a third external URL that holds information about this product (optional)
+  ProdURL Field - URL to ODE's product page
+  FilesURL Field - URL to ODE's product file list
+  LabelURL Field - URL to the product's label
+  PILOTURL Field - URL to USGS's Pilot UPC database (optional)
+  ODEId Field - An ODE internal ID
+  SubSiteTag Field - A special ODE field that indicates whether this footprint overlaps specific targets (Example: Spirit Rover)
+  </idAbs>
+		<idCredit>NASA Planetary Data System Geosciences Node</idCredit>
+		<resConst>
+			<Consts>
+				<useLimit>There are no access or use limitated for this data.  Please see https://pds-geosciences.wustl.edu/citations.html for scientific literature citation policies</useLimit>
+			</Consts>
+		</resConst>
+	</dataIdInfo>
+</metadata>
