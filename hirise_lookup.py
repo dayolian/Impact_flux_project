@@ -130,12 +130,27 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "hirise_lookup/1.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8-sig"))
+            raw = resp.read()
+        text = raw.decode("utf-8-sig")
+        if not text.strip():
+            print(f"    ODE returned empty response")
+            print(f"    URL was: {url}")
+            return []
+        data = json.loads(text)
     except urllib.error.URLError as e:
         print(f"    ODE request failed: {e}")
         return []
-    except Exception as e:
+    except json.JSONDecodeError as e:
         print(f"    ODE parse error: {e}")
+        # Print first 500 chars of raw response to help diagnose
+        try:
+            print(f"    Raw response (first 500 chars): {raw[:500]}")
+        except Exception:
+            pass
+        print(f"    URL was: {url}")
+        return []
+    except Exception as e:
+        print(f"    ODE error: {e}")
         return []
 
     try:
