@@ -114,16 +114,16 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
     maxlat = lat + margin
 
     params = {
-        "target":         "Mars",
-        "instrumenthost": "MRO",
-        "instrument":     "HIRISE",
-        "product_type":   "RDRV11",
-        "westernlon":     f"{west:.4f}",
-        "easternlon":     f"{east:.4f}",
-        "minlat":         f"{minlat:.4f}",
-        "maxlat":         f"{maxlat:.4f}",
-        "output":         "JSON",
-        "results":        "200",
+        "target":     "Mars",
+        "ihid":       "MRO",
+        "iid":        "HIRISE",
+        "pt":         "RDRV11",
+        "westernlon": f"{west:.4f}",
+        "easternlon": f"{east:.4f}",
+        "minlat":     f"{minlat:.4f}",
+        "maxlat":     f"{maxlat:.4f}",
+        "output":     "JSON",
+        "results":    "200",
     }
     url = ODE_URL + "?" + urllib.parse.urlencode(params)
 
