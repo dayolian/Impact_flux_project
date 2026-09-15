@@ -23,7 +23,7 @@ except ImportError:
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-MASTER_CSV = r"G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_combo_master_max20hits.csv"
+MASTER_CSV = r"G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_combo_master_max20hits_withdt_2018-2026.csv"
 OUTPUT_DIR = r"G:\crater_flux_output_folders"
 
 OUTPUT_FILES = {
@@ -46,6 +46,7 @@ BLACK_COVERAGE  = 0.50
 IMG_ROOTS = [
     os.path.normpath(OUTPUT_DIR),
     os.path.normpath(os.path.dirname(MASTER_CSV)),
+    os.path.normpath(r"F:\\"),
 ]
 
 # ─── Flask app ───────────────────────────────────────────────────────────────

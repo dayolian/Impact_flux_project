@@ -13,8 +13,8 @@ from datetime import datetime
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-MASTER_CSV = r"G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_combo_master_max20hits.csv"
-DBF_PATH   = r"G:\crater_flux_output_folders\Impact_flux_project\mars_mro_ctx_edr_c0a.dbf"
+MASTER_CSV = r"G:\crater_flux_output_folders\Impact_flux_project\pairsinfo_combo_master_max20hits_withdt_2018-2026.csv"
+DBF_PATH   = r"G:\crater_flux_output_folders\Impact_flux_project\mars_mro_ctx_edr_c0a_2026\mars_mro_ctx_edr_c0a.dbf"
 
 # ─── DBF reader ──────────────────────────────────────────────────────────────
 

@@ -101,7 +101,7 @@ end
 folders = dir(mainDir);
 folders = folders([folders.isdir]);
 folders = folders(~ismember({folders.name}, {'.', '..'}));
-folders = folders(startsWith({folders.name}, 'output_new_-180_-170_0_75'));
+folders = folders(startsWith({folders.name}, 'output_new_-180_-170_-75_0'));
 
 for k = 1:length(folders)
 
