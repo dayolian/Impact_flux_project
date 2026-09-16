@@ -33,9 +33,14 @@ import datetime
 import urllib.request
 import urllib.error
 
-import numpy as np
+# Must be set before GDAL/rasterio import to enable vsicurl range reads
+os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
+os.environ.setdefault("PROJ_IGNORE_CELESTIAL_BODY", "YES")
+
 import rasterio
 import rasterio.windows
+from pyproj import Transformer
 from PIL import Image
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -273,35 +278,44 @@ def select_product(products, before_date, strategy):
     return None, f"unknown strategy: {strategy}"
 
 
-def clip_half_px(clip_m, scale):
-    """Half-width of the clip in pixels."""
-    return max(1, int(round(clip_m / scale / 2)))
+
+def _project_hit_to_crs(src, hit_lat, hit_lon):
+    """
+    Project (hit_lat, hit_lon) WGS84 degrees into the rasterio dataset's CRS.
+    Returns (x_crs, y_crs) in the file's units, or raises on failure.
+    Uses pyproj with PROJ_IGNORE_CELESTIAL_BODY=YES so Mars CRS works.
+    """
+    # Always use lon/lat → file CRS with always_xy=True
+    t = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+    return t.transform(hit_lon, hit_lat)
 
 
 def attempt_vsicurl_clip(product_url, hit_lat, hit_lon, clip_m, out_tif):
     """
-    Try to read a clip from a remote JP2/GeoTIFF via GDAL vsicurl.
-    Returns True on success, False on failure.
+    Try to read a clip from a remote JP2 via GDAL vsicurl range reads.
+    Returns (True, '') on success, (False, reason) on failure.
     """
     vsi_url = f"/vsicurl/{product_url}"
-    half_px = clip_half_px(clip_m, HIRISE_SCALE)
 
     try:
         with rasterio.open(vsi_url) as src:
-            # Convert geographic coordinates to pixel row/col
-            # rasterio.index() takes (x=lon, y=lat) in the CRS of the file.
-            # HiRISE RDR MAP uses equirectangular with lon in 0-360 (positive east).
-            lon360 = lon_180_to_360(hit_lon)
-            row, col = src.index(lon360, hit_lat)
+            x_crs, y_crs = _project_hit_to_crs(src, hit_lat, hit_lon)
 
             h, w = src.height, src.width
-            col0 = max(0, col - half_px)
-            row0 = max(0, row - half_px)
-            col1 = min(w, col + half_px)
-            row1 = min(h, row + half_px)
+            # Pixel scale from the affine transform (metres per pixel)
+            px_scale = abs(src.transform.a)
+            half_px = max(1, int(round(clip_m / px_scale / 2)))
 
-            if col1 <= col0 or row1 <= row0:
-                return False
+            row_i, col_i = src.index(x_crs, y_crs)  # rasterio.index → (row, col)
+
+            if not (0 <= col_i < w and 0 <= row_i < h):
+                return False, (f"hit projects to col={col_i}, row={row_i} "
+                               f"outside image {w}x{h} — not within this HiRISE footprint")
+
+            col0 = max(0, col_i - half_px)
+            row0 = max(0, row_i - half_px)
+            col1 = min(w, col_i + half_px)
+            row1 = min(h, row_i + half_px)
 
             window = rasterio.windows.Window(
                 col_off=col0, row_off=row0,
@@ -309,7 +323,6 @@ def attempt_vsicurl_clip(product_url, hit_lat, hit_lon, clip_m, out_tif):
             )
             data = src.read(1, window=window)
 
-            # Compute transform for the clip
             win_transform = rasterio.windows.transform(window, src.transform)
             profile = src.profile.copy()
             profile.update(
@@ -319,11 +332,10 @@ def attempt_vsicurl_clip(product_url, hit_lat, hit_lon, clip_m, out_tif):
             with rasterio.open(out_tif, "w", **profile) as dst:
                 dst.write(data, 1)
 
-        return True
+        return True, ""
 
     except Exception as e:
-        print(f"    vsicurl clip failed: {e}")
-        return False
+        return False, str(e)
 
 
 def download_browse(browse_url, out_jpg):
@@ -547,21 +559,43 @@ for kw in KEYWORDS:
         if chosen is None:
             continue
 
-        # ── try full-res clip via vsicurl ────────────────────────────────────
-        product_url = chosen.get("jp2_url", "")
-        out_tif     = os.path.join(kw_dir, f"{gif_id}__hirise_clip.tif")
+        # ── try full-res clip via vsicurl ─────────────────────────────────────
+        # Try chosen product first, then fall back to other products in date order
+        out_tif = os.path.join(kw_dir, f"{gif_id}__hirise_clip.tif")
+        clip_ok = False
 
-        if product_url and not os.path.exists(out_tif):
-            print(f"    Attempting vsicurl clip from JP2...")
-            ok = attempt_vsicurl_clip(product_url, hit_lat, hit_lon,
-                                      CLIP_METRES, out_tif)
-            if ok:
-                sz = os.path.getsize(out_tif) / 1e6
-                print(f"    {gif_id}__hirise_clip.tif saved ({sz:.1f} MB)")
-            else:
-                print(f"    vsicurl failed — browse fallback only")
-        elif os.path.exists(out_tif):
-            print(f"    {gif_id}__hirise_clip.tif already exists, skipping")
+        if os.path.exists(out_tif):
+            print(f"    {gif_id}__hirise_clip.tif already exists, skipping clip")
+            clip_ok = True
+        else:
+            # Build ordered list: chosen first, then others sorted by date desc
+            candidates = []
+            if chosen:
+                candidates.append(chosen)
+            for p in sorted(products, key=lambda x: x.get("UTC_start_time",""), reverse=True):
+                if p is not chosen:
+                    candidates.append(p)
+
+            for p in candidates:
+                jp2_url = p.get("jp2_url", "")
+                if not jp2_url:
+                    continue
+                label = "chosen" if p is chosen else p.get("obs_id","?")
+                print(f"    Trying vsicurl clip: {p.get('obs_id','')} ({label})")
+                ok, reason = attempt_vsicurl_clip(jp2_url, hit_lat, hit_lon,
+                                                   CLIP_METRES, out_tif)
+                if ok:
+                    sz = os.path.getsize(out_tif) / 1e6
+                    print(f"    ✓ clip saved ({sz:.1f} MB)  [{p.get('obs_id','')}]")
+                    clip_ok = True
+                    # Update chosen so browse/summary reflect the actual product used
+                    chosen = p
+                    break
+                else:
+                    print(f"      ✗ {reason}")
+
+            if not clip_ok:
+                print(f"    No vsicurl clip succeeded — browse only")
 
         # ── download browse image ─────────────────────────────────────────────
         browse_url  = chosen.get("browse_url", "")
