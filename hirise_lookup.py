@@ -341,6 +341,17 @@ def download_browse(browse_url, out_jpg):
         return False
 
 
+def _delta_lon_deg(hit_lon, center_lon):
+    """
+    Signed angular difference (hit - center) in degrees, normalized to [-180, 180].
+    Handles the common mismatch where hit_lon is -180..+180 and ODE center_lon is 0..360.
+    """
+    d = (hit_lon % 360.0 - center_lon % 360.0) % 360.0
+    if d > 180.0:
+        d -= 360.0
+    return d
+
+
 def browse_hit_pixel(img_path, hit_lat, hit_lon, center_lat, center_lon):
     """
     Estimate the pixel location of (hit_lat, hit_lon) inside the HiRISE browse image.
@@ -356,11 +367,14 @@ def browse_hit_pixel(img_path, hit_lat, hit_lon, center_lat, center_lon):
     except Exception:
         return None
 
+    if math.isnan(center_lat) or math.isnan(center_lon):
+        return None
+
     HIRISE_SWATH_M = 6000.0
     m_per_px = HIRISE_SWATH_M / img_w
 
     delta_lat_m = (hit_lat - center_lat) * (math.pi / 180.0) * R_MARS
-    delta_lon_m = (hit_lon - center_lon) * (math.pi / 180.0) * R_MARS * math.cos(
+    delta_lon_m = _delta_lon_deg(hit_lon, center_lon) * (math.pi / 180.0) * R_MARS * math.cos(
         math.radians(hit_lat)
     )
 
@@ -429,7 +443,7 @@ for kw in KEYWORDS:
     if not hits:
         continue
 
-    kw_dir = os.path.join(OUTPUT_DIR, kw)
+    kw_dir = os.path.join(GIF_DIR, kw)   # co-locate with GIFs in gif_output/
     os.makedirs(kw_dir, exist_ok=True)
     print(f"\n{'─'*60}")
     print(f"Keyword: {kw}  ({len(hits)} hits)")
@@ -587,4 +601,4 @@ for kw in KEYWORDS:
                 print(f"    could not estimate hit pixel position for crosshair")
 
 print("\nAll done.")
-print(f"Output: {OUTPUT_DIR}")
+print(f"Output: {GIF_DIR}")
