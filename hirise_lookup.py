@@ -231,6 +231,19 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
         west_lon = _flt("WESTERNMOST_LONGITUDE")
 
         # True geographic centre of the image from its actual bounds
+        # If label parsing missed bounds, try top-level ODE product fields
+        def _item_flt(key):
+            v = item.get(key, "")
+            try:
+                return float(str(v).strip()) if v not in (None, "", "null") else float("nan")
+            except ValueError:
+                return float("nan")
+
+        if math.isnan(max_lat): max_lat  = _item_flt("Maximum_latitude")
+        if math.isnan(min_lat): min_lat  = _item_flt("Minimum_latitude")
+        if math.isnan(east_lon): east_lon = _item_flt("Easternmost_longitude")
+        if math.isnan(west_lon): west_lon = _item_flt("Westernmost_longitude")
+
         if not any(math.isnan(x) for x in (max_lat, min_lat, east_lon, west_lon)):
             true_c_lat = (max_lat + min_lat) / 2.0
             true_c_lon = (east_lon % 360.0 + west_lon % 360.0) / 2.0
@@ -321,13 +334,31 @@ def product_covers_hit(product, hit_lat, hit_lon):
 
 def _project_hit_to_crs(src, hit_lat, hit_lon):
     """
-    Project (hit_lat, hit_lon) WGS84 degrees into the rasterio dataset's CRS.
-    Returns (x_crs, y_crs) in the file's units, or raises on failure.
-    Uses pyproj with PROJ_IGNORE_CELESTIAL_BODY=YES so Mars CRS works.
+    Project (hit_lat, hit_lon) into the rasterio dataset's CRS (Mars equirectangular).
+
+    Uses direct equirectangular math parsed from the CRS WKT.  This avoids pyproj
+    EPSG:4326 → Mars CRS issues where a negative hit longitude (e.g. -174°) is
+    treated as -174 - central_meridian instead of the correct 0-360-wrapped delta.
+    Falls back to pyproj with 0-360-normalised longitude if WKT parsing fails.
     """
-    # Always use lon/lat → file CRS with always_xy=True
+    wkt = src.crs.to_wkt()
+    r_m  = re.search(r'SPHEROID\[[^\]]*?,\s*([\d.]+)\s*,', wkt)
+    cm_m = re.search(r'"central_meridian"\s*,\s*([-\d.]+)', wkt, re.IGNORECASE)
+    sp_m = re.search(r'"standard_parallel_1"\s*,\s*([-\d.]+)', wkt, re.IGNORECASE)
+
+    if r_m and cm_m and sp_m:
+        R   = float(r_m.group(1))
+        cm  = float(cm_m.group(1))
+        sp  = float(sp_m.group(1))
+        # Normalise to 0..360 so (hit_lon - cm) is the correct small delta
+        lon360 = hit_lon % 360.0
+        x_m = R * (lon360 - cm) * (math.pi / 180.0) * math.cos(math.radians(sp))
+        y_m = R * hit_lat       * (math.pi / 180.0)
+        return x_m, y_m
+
+    # Fallback: pyproj with normalised longitude
     t = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    return t.transform(hit_lon, hit_lat)
+    return t.transform(hit_lon % 360.0, hit_lat)
 
 
 def attempt_vsicurl_clip(product_url, hit_lat, hit_lon, clip_m, out_tif):
@@ -556,10 +587,20 @@ for kw in KEYWORDS:
         print(f"    ODE returned {len(products)} HiRISE products")
 
         # Filter to products whose bounding box actually contains the hit point
-        covered = [p for p in products if product_covers_hit(p, hit_lat, hit_lon)]
-        if len(covered) < len(products):
-            print(f"    Footprint filter: {len(products) - len(covered)} excluded "
-                  f"(hit not within bbox) → {len(covered)} remain")
+        covered = []
+        for p in products:
+            if product_covers_hit(p, hit_lat, hit_lon):
+                covered.append(p)
+            else:
+                ml  = p.get('min_lat', float('nan'))
+                mxl = p.get('max_lat', float('nan'))
+                wl  = p.get('west_lon', float('nan'))
+                el  = p.get('east_lon', float('nan'))
+                if not any(isinstance(v, float) and math.isnan(v) for v in (ml, mxl, wl, el)):
+                    b = f"lat [{ml:.3f}..{mxl:.3f}] lon [{wl:.3f}..{el:.3f}]"
+                else:
+                    b = "bounds unknown — label parse may have failed"
+                print(f"    Footprint filter: excluded {p.get('obs_id','')} ({b})")
         products = covered
 
         # ── select product ───────────────────────────────────────────────────
