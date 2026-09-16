@@ -56,6 +56,7 @@ INPUT_CSVS  = [
     os.path.join(ROOT, "interesting.csv"),
 ]
 OUTPUT_DIR  = os.path.join(ROOT, "hirise_output")
+GIF_DIR     = os.path.join(ROOT, "gif_output")
 
 # Geographic search margin around hit point (degrees).
 # ~0.15° ≈ 9 km at equator — HiRISE swaths are ~6 km wide so this catches most
@@ -132,6 +133,22 @@ def _hirise_urls(obs_id):
     jp2_url    = f"{base_pds}/{obs_id}_RED.JP2"
     browse_url = f"{base_extras}/{obs_id}_RED.browse.jpg"
     return jp2_url, browse_url
+
+
+def load_gif_ids(kw):
+    """
+    Load {(hit_prefix, normpath(pair_path)): gif_id} from gif_output/{kw}/metadata.csv.
+    Returns empty dict if the file doesn't exist (make_keyword_gifs not yet run).
+    """
+    meta_csv = os.path.join(GIF_DIR, kw, "metadata.csv")
+    result = {}
+    if not os.path.exists(meta_csv):
+        return result
+    with open(meta_csv, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            key = (row.get("hit_prefix", ""), os.path.normpath(row.get("pair_path", "")))
+            result[key] = row.get("id", "")
+    return result
 
 
 def ode_query(lat, lon, margin=BBOX_MARGIN):
@@ -371,20 +388,32 @@ for kw in KEYWORDS:
     print(f"Keyword: {kw}  ({len(hits)} hits)")
     print(f"{'─'*60}")
 
+    gif_ids = load_gif_ids(kw)
+    if gif_ids:
+        print(f"  Loaded {len(gif_ids)} GIF IDs from metadata.csv")
+    else:
+        print(f"  No metadata.csv found — run make_keyword_gifs.py first for ID matching")
+
     for i, hit in enumerate(hits, 1):
         prefix    = hit.get("hit_prefix", "unknown")
         pair_path = hit.get("wholepath", "")
         comments  = hit.get("comments", "")
-
-        print(f"\n  [{i}/{len(hits)}] {prefix}")
 
         # ── get lat/lon ──────────────────────────────────────────────────────
         try:
             hit_lat = float(hit.get("lat", ""))
             hit_lon = float(hit.get("lon", ""))
         except (ValueError, TypeError):
-            print(f"    SKIP: no lat/lon for this hit (run crop_generator.py first)")
+            print(f"\n  [{i}/{len(hits)}] {prefix}  SKIP: no lat/lon (run crop_generator.py first)")
             continue
+
+        # ── resolve GIF ID ───────────────────────────────────────────────────
+        gif_key = (prefix, os.path.normpath(pair_path))
+        gif_id  = gif_ids.get(gif_key, "")
+        if not gif_id:
+            gif_id = f"{kw}_{i:04d}"
+
+        print(f"\n  [{i}/{len(hits)}] {prefix}  [{gif_id}]")
 
         # ── get before-date from pairsinfo ───────────────────────────────────
         meta        = meta_by_path.get(os.path.normpath(pair_path), {})
@@ -414,13 +443,13 @@ for kw in KEYWORDS:
             print(f"    Selected: {chosen.get('pdsid','')}  ({note})")
 
         # ── output folder ────────────────────────────────────────────────────
-        pair_short = os.path.basename(os.path.normpath(pair_path))[:40]
-        hit_dir    = os.path.join(kw_dir, f"{prefix}__{pair_short}")
+        hit_dir = os.path.join(kw_dir, gif_id)
         os.makedirs(hit_dir, exist_ok=True)
 
         # ── write summary.txt ────────────────────────────────────────────────
         summary_lines = [
             f"Hit:              {prefix}",
+            f"GIF ID:           {gif_id}",
             f"Comments:         {comments}",
             f"Lat / Lon:        {hit_lat:.5f}, {hit_lon:.5f}",
             f"CTX pair ID:      {ctxID}",
@@ -480,16 +509,18 @@ for kw in KEYWORDS:
 
         # ── download browse image as fallback / context ──────────────────────
         browse_url = chosen.get("browse_url", "")
-        out_browse = os.path.join(hit_dir, "hirise_browse.jpg")
+        obs_id     = chosen.get("obs_id", "hirise")
+        browse_name = f"{obs_id}__{gif_id}.jpg"
+        out_browse  = os.path.join(hit_dir, browse_name)
 
         if browse_url and not os.path.exists(out_browse):
             print(f"    Downloading browse image...")
             ok = download_browse(browse_url, out_browse)
             if ok:
                 sz = os.path.getsize(out_browse) / 1e3
-                print(f"    hirise_browse.jpg saved ({sz:.0f} KB)")
+                print(f"    {browse_name} saved ({sz:.0f} KB)")
         elif os.path.exists(out_browse):
-            print(f"    hirise_browse.jpg already exists, skipping")
+            print(f"    {browse_name} already exists, skipping")
 
 print("\nAll done.")
 print(f"Output: {OUTPUT_DIR}")

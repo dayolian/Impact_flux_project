@@ -25,7 +25,6 @@ Edit KEYWORDS, GIF_OUTPUT_DIR, or frame timing below as needed.
 import os
 import csv
 import re
-import textwrap
 from PIL import Image
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -128,53 +127,56 @@ def make_gif(before_path, after_path, out_path):
     )
 
 
-def build_metadata_line(hit, meta):
-    """Format one hit's metadata as a text block."""
-    prefix   = hit.get("hit_prefix", "")
-    comments = hit.get("comments", "")
-    lat      = hit.get("lat", "")
-    lon      = hit.get("lon", "")
-    label    = hit.get("_source_label", "")
+METADATA_FIELDS = [
+    "id", "hit_prefix", "pair_name", "label", "comments",
+    "lat", "lon", "ctx_id1", "ctx_id2", "date1", "date2",
+    "days_between", "reg_score", "area_km2", "n_hits",
+    "pair_path", "gif_file", "crops_found",
+]
+
+
+def build_metadata_row(gif_id, hit, meta, gif_name, crops_found):
+    """Build a dict for one row of metadata.csv."""
+    pair_path = hit.get("wholepath", "")
+    pair_name = os.path.basename(os.path.normpath(pair_path)) if pair_path else ""
 
     if meta:
-        ctxID    = meta.get("ctxID", "")
-        # ctxID is "pid1_pid2"; split on first underscore-separated pair boundary
-        # CTX IDs themselves contain underscores, so split at the midpoint by
-        # finding the pattern: two 18-char CTX product IDs joined by underscore
+        ctxID = meta.get("ctxID", "")
         parts = ctxID.split("_")
-        # CTX product IDs have format like B01_010234_1234 (3 parts each)
-        # joined pair is 6 underscore-separated tokens total
         if len(parts) >= 6:
             pid1 = "_".join(parts[:3])
             pid2 = "_".join(parts[3:])
         else:
             pid1, pid2 = ctxID, ""
-        dt1      = meta.get("datetime1", "")
-        dt2      = meta.get("datetime2", "")
-        days     = meta.get("days_between", "")
-        score    = meta.get("RegistrationScore", "")
-        area     = meta.get("areakm2", "")
-        hits_n   = meta.get("hits", "")
+        dt1   = meta.get("datetime1", "")
+        dt2   = meta.get("datetime2", "")
+        days  = meta.get("days_between", "")
+        score = meta.get("RegistrationScore", "")
+        area  = meta.get("areakm2", "")
+        hits_n = meta.get("hits", "")
     else:
         pid1 = pid2 = dt1 = dt2 = days = score = area = hits_n = ""
 
-    lines = [
-        f"Hit:              {prefix}",
-        f"Flag label:       {label}",
-        f"Comments:         {comments}",
-        f"Lat/Lon:          {lat}, {lon}",
-        f"CTX image 1:      {pid1}",
-        f"CTX image 2:      {pid2}",
-        f"Date 1:           {dt1}",
-        f"Date 2:           {dt2}",
-        f"Days between:     {days}",
-        f"Reg. score:       {score}",
-        f"Pair area (km²):  {area}",
-        f"N hits in pair:   {hits_n}",
-        f"Pair path:        {hit.get('wholepath', '')}",
-        "-" * 60,
-    ]
-    return "\n".join(lines)
+    return {
+        "id":           gif_id,
+        "hit_prefix":   hit.get("hit_prefix", ""),
+        "pair_name":    pair_name,
+        "label":        hit.get("_source_label", ""),
+        "comments":     hit.get("comments", ""),
+        "lat":          hit.get("lat", ""),
+        "lon":          hit.get("lon", ""),
+        "ctx_id1":      pid1,
+        "ctx_id2":      pid2,
+        "date1":        dt1,
+        "date2":        dt2,
+        "days_between": days,
+        "reg_score":    score,
+        "area_km2":     area,
+        "n_hits":       hits_n,
+        "pair_path":    pair_path,
+        "gif_file":     gif_name,
+        "crops_found":  "yes" if crops_found else "no",
+    }
 
 
 total_gifs = 0
@@ -188,14 +190,10 @@ for kw in KEYWORDS:
     kw_dir = os.path.join(GIF_OUTPUT_DIR, kw)
     os.makedirs(kw_dir, exist_ok=True)
 
-    meta_lines = [
-        f"Keyword: {kw}",
-        f"Hits: {len(hits)}",
-        "=" * 60,
-        "",
-    ]
-
     print(f"\n── {kw} ({len(hits)} hits) ──")
+
+    meta_rows = []
+    seq = 0  # counts ALL hits in order (including missing crops), for stable IDs
 
     for hit in hits:
         pair_path = hit.get("wholepath", "")
@@ -203,39 +201,37 @@ for kw in KEYWORDS:
         if not pair_path or not prefix:
             continue
 
-        # Lookup metadata
+        seq += 1
+        gif_id   = f"{kw}_{seq:04d}"
+        gif_name = f"{gif_id}.gif"
+        gif_path = os.path.join(kw_dir, gif_name)
+
         meta = meta_by_path.get(os.path.normpath(pair_path))
-
-        # Build GIF filename: prefix + short pair name
-        pair_name = os.path.basename(os.path.normpath(pair_path))
-        gif_name  = f"{prefix}__{pair_name[:40]}.gif"
-        gif_path  = os.path.join(kw_dir, gif_name)
-
         before_path, after_path = find_200px_crops(pair_path, prefix)
 
-        if before_path is None:
-            print(f"  WARNING: crops not found for {prefix} in {pair_path}")
+        crops_ok = before_path is not None
+
+        if not crops_ok:
+            print(f"  WARNING: crops not found for {prefix} ({gif_id})")
             total_missing += 1
-            meta_lines.append(f"[MISSING CROPS] {build_metadata_line(hit, meta)}")
-            continue
+        else:
+            try:
+                make_gif(before_path, after_path, gif_path)
+                print(f"  {gif_name}")
+                total_gifs += 1
+            except Exception as e:
+                print(f"  ERROR making GIF for {prefix} ({gif_id}): {e}")
+                crops_ok = False
 
-        try:
-            make_gif(before_path, after_path, gif_path)
-            print(f"  {gif_name}")
-            total_gifs += 1
-        except Exception as e:
-            print(f"  ERROR making GIF for {prefix}: {e}")
-            meta_lines.append(f"[GIF ERROR] {build_metadata_line(hit, meta)}")
-            continue
+        meta_rows.append(build_metadata_row(gif_id, hit, meta, gif_name, crops_ok))
 
-        meta_lines.append(f"GIF: {gif_name}")
-        meta_lines.append(build_metadata_line(hit, meta))
-
-    # Write metadata.txt for this keyword
-    meta_path = os.path.join(kw_dir, "metadata.txt")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(meta_lines) + "\n")
-    print(f"  → metadata.txt written ({len(hits)} entries)")
+    # Write metadata.csv for this keyword
+    meta_path = os.path.join(kw_dir, "metadata.csv")
+    with open(meta_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=METADATA_FIELDS)
+        writer.writeheader()
+        writer.writerows(meta_rows)
+    print(f"  → metadata.csv written ({len(meta_rows)} rows)")
 
 print(f"\nDone. {total_gifs} GIFs created, {total_missing} missing crops.")
 print(f"Output: {GIF_OUTPUT_DIR}")
