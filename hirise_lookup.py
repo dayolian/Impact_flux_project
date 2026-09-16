@@ -116,7 +116,8 @@ def _parse_label(label_lines):
     for line in label_lines:
         s = str(line).strip()
         for key in ("PRODUCT_ID", "OBSERVATION_ID", "START_TIME",
-                    "CENTER_LATITUDE", "CENTER_LONGITUDE"):
+                    "MAXIMUM_LATITUDE", "MINIMUM_LATITUDE",
+                    "EASTERNMOST_LONGITUDE", "WESTERNMOST_LONGITUDE"):
             if s.startswith(key + " ") or s.startswith(key + "="):
                 val = s.split("=", 1)[1].strip().strip('"').split("<")[0].strip()
                 result[key] = val
@@ -216,24 +217,42 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
             continue
 
         start = fields.get("START_TIME", "")
-        try:
-            c_lat = float(fields.get("CENTER_LATITUDE", "nan").replace("<DEG>", ""))
-            c_lon = float(fields.get("CENTER_LONGITUDE", "nan").replace("<DEG>", ""))
-        except ValueError:
-            c_lat = c_lon = float("nan")
+
+        def _flt(key):
+            v = fields.get(key, "")
+            try:
+                return float(v.replace("<DEG>", "")) if v else float("nan")
+            except ValueError:
+                return float("nan")
+
+        max_lat  = _flt("MAXIMUM_LATITUDE")
+        min_lat  = _flt("MINIMUM_LATITUDE")
+        east_lon = _flt("EASTERNMOST_LONGITUDE")
+        west_lon = _flt("WESTERNMOST_LONGITUDE")
+
+        # True geographic centre of the image from its actual bounds
+        if not any(math.isnan(x) for x in (max_lat, min_lat, east_lon, west_lon)):
+            true_c_lat = (max_lat + min_lat) / 2.0
+            true_c_lon = (east_lon % 360.0 + west_lon % 360.0) / 2.0
+        else:
+            true_c_lat = true_c_lon = float("nan")
 
         if not obs_id:
             continue
 
         jp2_url, browse_url = _hirise_urls(obs_id)
         products.append({
-            "pdsid":      pds_id,
-            "obs_id":     obs_id,
-            "_date":      parse_date(start),
-            "center_lat": c_lat,
-            "center_lon": c_lon,
-            "jp2_url":    jp2_url,
-            "browse_url": browse_url,
+            "pdsid":         pds_id,
+            "obs_id":        obs_id,
+            "_date":         parse_date(start),
+            "center_lat":    true_c_lat,
+            "center_lon":    true_c_lon,
+            "max_lat":       max_lat,
+            "min_lat":       min_lat,
+            "east_lon":      east_lon,
+            "west_lon":      west_lon,
+            "jp2_url":       jp2_url,
+            "browse_url":    browse_url,
             "UTC_start_time": start,
         })
 
@@ -279,6 +298,25 @@ def select_product(products, before_date, strategy):
 
     return None, f"unknown strategy: {strategy}"
 
+
+def product_covers_hit(product, hit_lat, hit_lon):
+    """
+    Return True if the hit lat/lon falls within the product's PDS bounding box.
+    Returns True (allow through) when bounds are unavailable.
+    """
+    min_lat  = product.get("min_lat",  float("nan"))
+    max_lat  = product.get("max_lat",  float("nan"))
+    west_lon = product.get("west_lon", float("nan"))
+    east_lon = product.get("east_lon", float("nan"))
+    if any(math.isnan(x) for x in (min_lat, max_lat, west_lon, east_lon)):
+        return True
+    lat_ok = min_lat <= hit_lat <= max_lat
+    # Normalise to 0..360 for longitude comparison
+    h360 = hit_lon  % 360.0
+    w360 = west_lon % 360.0
+    e360 = east_lon % 360.0
+    lon_ok = (h360 >= w360 and h360 <= e360) if w360 <= e360 else (h360 >= w360 or h360 <= e360)
+    return lat_ok and lon_ok
 
 
 def _project_hit_to_crs(src, hit_lat, hit_lon):
@@ -367,11 +405,14 @@ def _delta_lon_deg(hit_lon, center_lon):
 
 
 def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
-                          center_lat, center_lon, clip_m=CLIP_METRES):
+                          min_lat, max_lat, west_lon, east_lon, clip_m=CLIP_METRES):
     """
-    Crop the full browse image to ~clip_m around the hit point and save to out_crop.
-    Draws a small yellow crosshair at the centre of the crop (= hit location).
-    Returns True on success, False if the hit falls outside the image.
+    Crop the full browse image to ~clip_m around the hit using the image's actual
+    PDS geographic bounds.  The browse is assumed to be a north-up equirect JPEG:
+      x=0 → west_lon,  x=img_w → east_lon
+      y=0 → max_lat,   y=img_h → min_lat
+    Draws a yellow crosshair at the hit position.
+    Returns True on success, False if hit is outside image or bounds are bad.
     """
     try:
         img = Image.open(browse_path).convert("RGB")
@@ -379,21 +420,33 @@ def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
     except Exception:
         return False
 
-    if math.isnan(center_lat) or math.isnan(center_lon):
+    if any(math.isnan(x) for x in (min_lat, max_lat, west_lon, east_lon)):
         return False
 
-    m_per_px = 6000.0 / img_w          # HiRISE swath ~6 km
-    half_px  = max(20, int(round(clip_m / m_per_px / 2)))
+    lat_span = max_lat - min_lat
+    # Normalise longitudes to 0..360 and compute span
+    w360     = west_lon % 360.0
+    e360     = east_lon % 360.0
+    lon_span = (e360 - w360) % 360.0
+    if lat_span <= 0 or lon_span <= 0:
+        return False
 
-    delta_lat_m = (hit_lat - center_lat) * (math.pi / 180.0) * R_MARS
-    delta_lon_m = (_delta_lon_deg(hit_lon, center_lon)
-                   * (math.pi / 180.0) * R_MARS * math.cos(math.radians(hit_lat)))
+    # Fractional position of hit in image (north-up, west-left)
+    frac_x = ((hit_lon % 360.0 - w360) % 360.0) / lon_span
+    frac_y = (max_lat - hit_lat) / lat_span   # 0=top(north), 1=bottom(south)
 
-    cx = img_w / 2.0 + delta_lon_m / m_per_px
-    cy = img_h / 2.0 - delta_lat_m / m_per_px   # north-up → lower y = north
+    if not (0.0 <= frac_x <= 1.0 and 0.0 <= frac_y <= 1.0):
+        return False
+
+    cx = frac_x * img_w
+    cy = frac_y * img_h
+
+    # Pixel scale from actual footprint
+    lat_span_m = lat_span * (math.pi / 180.0) * R_MARS
+    m_per_px   = lat_span_m / img_h
+    half_px    = max(20, int(round(clip_m / m_per_px / 2)))
 
     px = int(round(cx)); py = int(round(cy))
-
     if not (0 <= px < img_w and 0 <= py < img_h):
         return False
 
@@ -501,6 +554,13 @@ for kw in KEYWORDS:
         time.sleep(ODE_DELAY)
         products = ode_query(hit_lat, hit_lon)
         print(f"    ODE returned {len(products)} HiRISE products")
+
+        # Filter to products whose bounding box actually contains the hit point
+        covered = [p for p in products if product_covers_hit(p, hit_lat, hit_lon)]
+        if len(covered) < len(products):
+            print(f"    Footprint filter: {len(products) - len(covered)} excluded "
+                  f"(hit not within bbox) → {len(covered)} remain")
+        products = covered
 
         # ── select product ───────────────────────────────────────────────────
         chosen, note = select_product(products, before_date, SELECTION_STRATEGY)
@@ -629,19 +689,19 @@ for kw in KEYWORDS:
 
         # ── crop browse to GIF extent (~1200 m) around the hit ────────────────
         if browse_ok:
-            try:
-                c_lat = float(chosen.get("center_lat", "nan"))
-                c_lon = float(chosen.get("center_lon", "nan"))
-            except (TypeError, ValueError):
-                c_lat = c_lon = float("nan")
-
             crop_name = f"{gif_id}__{obs_id}__crop.jpg"
             out_crop  = os.path.join(kw_dir, crop_name)
+            b_min_lat  = chosen.get("min_lat",  float("nan"))
+            b_max_lat  = chosen.get("max_lat",  float("nan"))
+            b_west_lon = chosen.get("west_lon", float("nan"))
+            b_east_lon = chosen.get("east_lon", float("nan"))
             if crop_browse_to_extent(out_browse, out_crop,
-                                     hit_lat, hit_lon, c_lat, c_lon):
+                                     hit_lat, hit_lon,
+                                     b_min_lat, b_max_lat,
+                                     b_west_lon, b_east_lon):
                 print(f"    browse crop saved: {crop_name}")
             else:
-                print(f"    browse crop failed (hit outside image or missing coords)")
+                print(f"    browse crop failed (hit outside image or missing bounds)")
 
 print("\nAll done.")
 print(f"Output: {GIF_DIR}")
