@@ -590,8 +590,21 @@ for kw in KEYWORDS:
                     sz = os.path.getsize(out_tif) / 1e6
                     print(f"    ✓ clip saved ({sz:.1f} MB)  [{p.get('obs_id','')}]")
                     clip_ok = True
-                    # Update chosen so browse/summary reflect the actual product used
                     chosen = p
+                    # Write a display JPEG with proper stretch for viewing
+                    jpg_out = out_tif.replace("__hirise_clip.tif", "__hirise_clip.jpg")
+                    try:
+                        with rasterio.open(out_tif) as src:
+                            data = src.read(1).astype(float)
+                        lo, hi = data.min(), data.max()
+                        if hi > lo:
+                            scaled = ((data - lo) / (hi - lo) * 255).clip(0, 255).astype("uint8")
+                        else:
+                            scaled = data.astype("uint8")
+                        Image.fromarray(scaled).save(jpg_out, "JPEG", quality=92)
+                        print(f"    ✓ display JPEG saved  [{os.path.basename(jpg_out)}]")
+                    except Exception as e:
+                        print(f"    display JPEG failed: {e}")
                     break
                 else:
                     print(f"      ✗ {reason}")
