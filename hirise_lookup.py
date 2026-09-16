@@ -388,6 +388,55 @@ def annotate_browse_crop(browse_path, out_crop, hit_lat, hit_lon,
     return True
 
 
+def annotate_full_browse(browse_path, hit_lat, hit_lon,
+                         min_lat, max_lat, west_lon, east_lon,
+                         box_color_name, clip_m=CLIP_METRES):
+    """
+    Draw the colored GIF-extent rectangle directly on the full browse swath.
+    Overwrites the file in place.  Returns True on success.
+    """
+    try:
+        img = Image.open(browse_path).convert("RGB")
+        img_w, img_h = img.size
+    except Exception:
+        return False
+
+    if any(math.isnan(x) for x in (min_lat, max_lat, west_lon, east_lon)):
+        return False
+
+    lat_span = max_lat - min_lat
+    w360     = west_lon % 360.0
+    e360     = east_lon % 360.0
+    lon_span = (e360 - w360) % 360.0
+    if lat_span <= 0 or lon_span <= 0:
+        return False
+
+    frac_x = ((hit_lon % 360.0 - w360) % 360.0) / lon_span
+    frac_y = (max_lat - hit_lat) / lat_span
+
+    if not (0.0 <= frac_x <= 1.0 and 0.0 <= frac_y <= 1.0):
+        return False
+
+    lat_span_m = lat_span * (math.pi / 180.0) * R_MARS
+    m_per_px   = lat_span_m / img_h
+    box_half   = max(3, int(round(clip_m / m_per_px / 2)))
+
+    cx = frac_x * img_w
+    cy = frac_y * img_h
+    px = int(round(cx)); py = int(round(cy))
+
+    bx0 = max(0,          px - box_half)
+    bx1 = min(img_w - 1,  px + box_half)
+    by0 = max(0,          py - box_half)
+    by1 = min(img_h - 1,  py + box_half)
+
+    color = BOX_COLORS.get(box_color_name, BOX_COLORS["yellow"])
+    draw  = ImageDraw.Draw(img)
+    draw.rectangle([bx0, by0, bx1, by1], outline=color, width=3)
+    img.save(browse_path, "JPEG", quality=92)
+    return True
+
+
 # ── Load metadata ─────────────────────────────────────────────────────────────
 
 print("Loading pairsinfo metadata...")
@@ -539,14 +588,19 @@ for kw in KEYWORDS:
                 browse_ok = True
                 print(f"    {browse_name} already exists")
 
-        # ── annotate browse crop with colored GIF-extent rectangle ────────────
+        # ── annotate both full browse (in-place) and crop ────────────────────
         if browse_ok:
-            crop_name  = f"{gif_id}__{obs_id}__crop.jpg"
-            out_crop   = os.path.join(kw_dir, crop_name)
             b_min_lat  = chosen.get("min_lat",  float("nan"))
             b_max_lat  = chosen.get("max_lat",  float("nan"))
             b_west_lon = chosen.get("west_lon", float("nan"))
             b_east_lon = chosen.get("east_lon", float("nan"))
+
+            annotate_full_browse(out_browse, hit_lat, hit_lon,
+                                 b_min_lat, b_max_lat, b_west_lon, b_east_lon,
+                                 box_color)
+
+            crop_name  = f"{gif_id}__{obs_id}__crop.jpg"
+            out_crop   = os.path.join(kw_dir, crop_name)
             if annotate_browse_crop(out_browse, out_crop,
                                     hit_lat, hit_lon,
                                     b_min_lat, b_max_lat,
