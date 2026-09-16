@@ -358,7 +358,7 @@ def download_browse(browse_url, out_jpg):
 def _delta_lon_deg(hit_lon, center_lon):
     """
     Signed angular difference (hit - center) in degrees, normalized to [-180, 180].
-    Handles the common mismatch where hit_lon is -180..+180 and ODE center_lon is 0..360.
+    Handles the mismatch where hit_lon is -180..+180 and ODE center_lon is 0..360.
     """
     d = (hit_lon % 360.0 - center_lon % 360.0) % 360.0
     if d > 180.0:
@@ -366,54 +366,51 @@ def _delta_lon_deg(hit_lon, center_lon):
     return d
 
 
-def browse_hit_pixel(img_path, hit_lat, hit_lon, center_lat, center_lon):
+def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
+                          center_lat, center_lon, clip_m=CLIP_METRES):
     """
-    Estimate the pixel location of (hit_lat, hit_lon) inside the HiRISE browse image.
-
-    Method: assume N-up orientation and 6 km cross-track swath width (standard HiRISE RED).
-    Browse pixels-per-metre is derived from image width / 6000 m.
-    Returns (px, py) clamped to image bounds, or None on any failure.
+    Crop the full browse image to ~clip_m around the hit point and save to out_crop.
+    Draws a small yellow crosshair at the centre of the crop (= hit location).
+    Returns True on success, False if the hit falls outside the image.
     """
     try:
-        from PIL import Image as _Image
-        with _Image.open(img_path) as im:
-            img_w, img_h = im.size
+        img = Image.open(browse_path).convert("RGB")
+        img_w, img_h = img.size
     except Exception:
-        return None
+        return False
 
     if math.isnan(center_lat) or math.isnan(center_lon):
-        return None
+        return False
 
-    HIRISE_SWATH_M = 6000.0
-    m_per_px = HIRISE_SWATH_M / img_w
+    m_per_px = 6000.0 / img_w          # HiRISE swath ~6 km
+    half_px  = max(20, int(round(clip_m / m_per_px / 2)))
 
     delta_lat_m = (hit_lat - center_lat) * (math.pi / 180.0) * R_MARS
-    delta_lon_m = _delta_lon_deg(hit_lon, center_lon) * (math.pi / 180.0) * R_MARS * math.cos(
-        math.radians(hit_lat)
-    )
+    delta_lon_m = (_delta_lon_deg(hit_lon, center_lon)
+                   * (math.pi / 180.0) * R_MARS * math.cos(math.radians(hit_lat)))
 
     cx = img_w / 2.0 + delta_lon_m / m_per_px
-    cy = img_h / 2.0 - delta_lat_m / m_per_px   # north = up = lower y-index
+    cy = img_h / 2.0 - delta_lat_m / m_per_px   # north-up → lower y = north
 
-    px = int(max(0, min(img_w - 1, round(cx))))
-    py = int(max(0, min(img_h - 1, round(cy))))
-    return px, py
+    px = int(round(cx)); py = int(round(cy))
 
+    if not (0 <= px < img_w and 0 <= py < img_h):
+        return False
 
-def draw_crosshair(img_path, px, py, arm=50, thickness=3, color=(255, 220, 0)):
-    """
-    Draw a yellow + crosshair on img_path at pixel (px, py). Overwrites in place.
-    arm: half-length of each arm in pixels.
-    """
-    from PIL import Image as _Image, ImageDraw
-    img = _Image.open(img_path).convert("RGB")
-    draw = ImageDraw.Draw(img)
-    w, h = img.size
-    draw.line([(max(0, px - arm), py), (min(w - 1, px + arm), py)],
-              fill=color, width=thickness)
-    draw.line([(px, max(0, py - arm)), (px, min(h - 1, py + arm))],
-              fill=color, width=thickness)
-    img.save(img_path, "JPEG", quality=90)
+    x0 = max(0, px - half_px); x1 = min(img_w, px + half_px)
+    y0 = max(0, py - half_px); y1 = min(img_h, py + half_px)
+
+    from PIL import ImageDraw
+    crop = img.crop((x0, y0, x1, y1))
+    draw = ImageDraw.Draw(crop)
+    cx_c = px - x0; cy_c = py - y0
+    arm  = max(8, half_px // 5)
+    draw.line([(max(0, cx_c - arm), cy_c), (min(crop.width  - 1, cx_c + arm), cy_c)],
+              fill=(255, 220, 0), width=2)
+    draw.line([(cx_c, max(0, cy_c - arm)), (cx_c, min(crop.height - 1, cy_c + arm))],
+              fill=(255, 220, 0), width=2)
+    crop.save(out_crop, "JPEG", quality=92)
+    return True
 
 
 # ── Load metadata ─────────────────────────────────────────────────────────────
@@ -612,42 +609,39 @@ for kw in KEYWORDS:
             if not clip_ok:
                 print(f"    No vsicurl clip succeeded — browse only")
 
-        # ── download browse image ─────────────────────────────────────────────
+        # ── download browse image (always, even when clip succeeded) ─────────
         browse_url  = chosen.get("browse_url", "")
         obs_id      = chosen.get("obs_id", "hirise")
         browse_name = f"{gif_id}__{obs_id}.jpg"
         out_browse  = os.path.join(kw_dir, browse_name)
 
-        already_exists = os.path.exists(out_browse)
-        if browse_url and not already_exists:
-            print(f"    Downloading browse image...")
-            ok = download_browse(browse_url, out_browse)
-            if ok:
-                sz = os.path.getsize(out_browse) / 1e3
-                print(f"    {browse_name} saved ({sz:.0f} KB)")
+        browse_ok = False
+        if browse_url:
+            if not os.path.exists(out_browse):
+                print(f"    Downloading browse image...")
+                browse_ok = download_browse(browse_url, out_browse)
+                if browse_ok:
+                    sz = os.path.getsize(out_browse) / 1e3
+                    print(f"    {browse_name} saved ({sz:.0f} KB)")
             else:
-                ok = False
-        else:
-            ok = already_exists
-            if already_exists:
-                print(f"    {browse_name} already exists, re-drawing crosshair")
+                browse_ok = True
+                print(f"    {browse_name} already exists")
 
-        # ── draw crosshair at hit location ────────────────────────────────────
-        if ok and os.path.exists(out_browse):
-            c_lat = chosen.get("center_lat", float("nan"))
-            c_lon = chosen.get("center_lon", float("nan"))
+        # ── crop browse to GIF extent (~1200 m) around the hit ────────────────
+        if browse_ok:
             try:
-                c_lat = float(c_lat)
-                c_lon = float(c_lon)
+                c_lat = float(chosen.get("center_lat", "nan"))
+                c_lon = float(chosen.get("center_lon", "nan"))
             except (TypeError, ValueError):
                 c_lat = c_lon = float("nan")
 
-            pos = browse_hit_pixel(out_browse, hit_lat, hit_lon, c_lat, c_lon)
-            if pos:
-                draw_crosshair(out_browse, pos[0], pos[1])
-                print(f"    crosshair drawn at pixel {pos[0]},{pos[1]}")
+            crop_name = f"{gif_id}__{obs_id}__crop.jpg"
+            out_crop  = os.path.join(kw_dir, crop_name)
+            if crop_browse_to_extent(out_browse, out_crop,
+                                     hit_lat, hit_lon, c_lat, c_lon):
+                print(f"    browse crop saved: {crop_name}")
             else:
-                print(f"    could not estimate hit pixel position for crosshair")
+                print(f"    browse crop failed (hit outside image or missing coords)")
 
 print("\nAll done.")
 print(f"Output: {GIF_DIR}")
