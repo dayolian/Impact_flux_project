@@ -368,10 +368,8 @@ def _add_scalebar(img, m_per_px, font, bar_m=SCALEBAR_M):
         text_w, text_h = font.getsize(label)
 
     text_x = bar_x0 + (bar_px - text_w) // 2
-    text_y = bar_y - text_h - 5
+    text_y = bar_y - text_h - 12
 
-    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        draw.text((text_x + dx, text_y + dy), label, fill=(255, 255, 255), font=font)
     draw.text((text_x, text_y), label, fill=(0, 0, 0), font=font)
     draw.line([(bar_x0, bar_y), (bar_x1, bar_y)], fill=(0, 0, 0), width=5)
     for x in (bar_x0, bar_x1):
@@ -451,7 +449,7 @@ def annotate_browse_crop(browse_path, out_crop, hit_lat, hit_lon,
     by1  = min(crop.height-1,cy_c + box_half)
     draw.rectangle([bx0, by0, bx1, by1], outline=color, width=3)
 
-    _add_scalebar(crop, m_per_px, _load_font(14))
+    _add_scalebar(crop, m_per_px, _load_font(20))
 
     crop.save(out_crop, "JPEG", quality=92)
     return True
