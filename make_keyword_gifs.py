@@ -156,11 +156,29 @@ def find_200px_crops(pair_path, prefix):
     return None, None
 
 
+def _add_frame_label(img, text, font):
+    """Draw BEFORE / AFTER in the top-right corner of img."""
+    draw = ImageDraw.Draw(img)
+    w, _h = img.size
+    margin = 6
+    try:
+        tb = draw.textbbox((0, 0), text, font=font)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    except AttributeError:
+        tw, th = font.getsize(text)
+    tx = w - tw - margin
+    ty = margin
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        draw.text((tx + dx, ty + dy), text, fill=(255, 255, 255), font=font)
+    draw.text((tx, ty), text, fill=(0, 0, 0), font=font)
+    return img
+
+
 def make_gif(before_path, after_path, out_path):
     """Create a two-frame animated GIF from before/after JPEGs with scale bar."""
     font  = _load_font(11)
-    img_b = _add_scalebar(Image.open(before_path).convert("RGB"), CTX_M_PER_PX, font)
-    img_a = _add_scalebar(Image.open(after_path).convert("RGB"),  CTX_M_PER_PX, font)
+    img_b = _add_frame_label(_add_scalebar(Image.open(before_path).convert("RGB"), CTX_M_PER_PX, font), "BEFORE", font)
+    img_a = _add_frame_label(_add_scalebar(Image.open(after_path).convert("RGB"),  CTX_M_PER_PX, font), "AFTER",  font)
     img_b_p = img_b.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     img_a_p = img_a.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     img_b_p.save(
@@ -189,9 +207,14 @@ def build_metadata_row(gif_id, hit, meta, gif_name, crops_found):
     if meta:
         ctxID = meta.get("ctxID", "")
         parts = ctxID.split("_")
-        if len(parts) >= 6:
-            pid1 = "_".join(parts[:3])
-            pid2 = "_".join(parts[3:])
+        # Each obs ID starts with a 3-char token like D20, J02, P02, B01 …
+        split_idx = next(
+            (i for i, p in enumerate(parts) if i > 0 and re.match(r'^[A-Z]\d\d$', p)),
+            None,
+        )
+        if split_idx:
+            pid1 = "_".join(parts[:split_idx])
+            pid2 = "_".join(parts[split_idx:])
         else:
             pid1, pid2 = ctxID, ""
         dt1   = meta.get("datetime1", "")

@@ -72,14 +72,34 @@
     .cell.potential_hit { border-color: #e0921a; }
     .cell.interesting   { border-color: #3a88e0; }
 
-    .cell-img {
+    .img-wrap {
       flex-shrink: 0;
+      position: relative;
+      width: 200px;
+      height: 200px;
+    }
+
+    .cell-img {
       width: 200px;
       height: 200px;
       background: #000;
       display: block;
       image-rendering: pixelated;
       object-fit: contain;
+    }
+
+    .frame-label {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      background: rgba(0,0,0,0.55);
+      padding: 1px 5px;
+      border-radius: 3px;
+      pointer-events: none;
+      letter-spacing: 0.04em;
     }
 
     .cell-body {
@@ -253,6 +273,9 @@
     document.querySelectorAll(".cell-img").forEach(img => {
       img.src = showBefore ? img.dataset.before : img.dataset.after;
     });
+    document.querySelectorAll(".frame-label").forEach(el => {
+      el.textContent = showBefore ? "BEFORE" : "AFTER";
+    });
   }, 500);
 
   // ── API ────────────────────────────────────────────────────────────────────
@@ -302,12 +325,22 @@
       cell.className = `cell ${hit.label}`;
 
       // Blinking image
+      const wrap = document.createElement("div");
+      wrap.className = "img-wrap";
+
       const img = document.createElement("img");
       img.className      = "cell-img";
       img.dataset.before = hit.before_url;
       img.dataset.after  = hit.after_url;
       img.src            = showBefore ? hit.before_url : hit.after_url;
       img.alt            = hit.hit_prefix;
+
+      const frameLabel = document.createElement("div");
+      frameLabel.className = "frame-label";
+      frameLabel.textContent = showBefore ? "BEFORE" : "AFTER";
+
+      wrap.appendChild(img);
+      wrap.appendChild(frameLabel);
 
       // Info body
       const body = document.createElement("div");
@@ -356,7 +389,7 @@
       body.appendChild(commentLabel);
       body.appendChild(textarea);
 
-      cell.appendChild(img);
+      cell.appendChild(wrap);
       cell.appendChild(body);
       grid.appendChild(cell);
     });
