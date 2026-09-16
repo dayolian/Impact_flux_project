@@ -384,11 +384,6 @@ def annotate_browse_crop(browse_path, out_crop, hit_lat, hit_lon,
     by1  = min(crop.height-1,cy_c + box_half)
     draw.rectangle([bx0, by0, bx1, by1], outline=color, width=3)
 
-    # Small crosshair at hit centre
-    arm = max(5, box_half // 6)
-    draw.line([(max(0, cx_c-arm), cy_c), (min(crop.width-1,  cx_c+arm), cy_c)], fill=color, width=2)
-    draw.line([(cx_c, max(0, cy_c-arm)), (cx_c, min(crop.height-1, cy_c+arm))], fill=color, width=2)
-
     crop.save(out_crop, "JPEG", quality=92)
     return True
 
