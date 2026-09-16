@@ -32,7 +32,11 @@ from PIL import Image, ImageDraw
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-KEYWORDS = ["MEDIUM"]         # keywords to filter comments on
+KEYWORDS = [
+    "HIGH", "MEDIUM", "LOW",
+    "DUNE", "ICE", "VORTEX", "CLOUD",
+    "TRACK", "RSL", "IDEA",
+]
 
 ROOT        = r"G:\crater_flux_output_folders"
 PROJ        = os.path.join(ROOT, "Impact_flux_project")
@@ -602,25 +606,29 @@ for kw in KEYWORDS:
 
         # ── annotate both full browse (in-place) and crop ────────────────────
         if browse_ok:
-            b_min_lat  = chosen.get("min_lat",  float("nan"))
-            b_max_lat  = chosen.get("max_lat",  float("nan"))
-            b_west_lon = chosen.get("west_lon", float("nan"))
-            b_east_lon = chosen.get("east_lon", float("nan"))
+            crop_name = f"{gif_id}__{obs_id}__crop.jpg"
+            out_crop  = os.path.join(kw_dir, crop_name)
 
-            annotate_full_browse(out_browse, hit_lat, hit_lon,
-                                 b_min_lat, b_max_lat, b_west_lon, b_east_lon,
-                                 box_color)
-
-            crop_name  = f"{gif_id}__{obs_id}__crop.jpg"
-            out_crop   = os.path.join(kw_dir, crop_name)
-            if annotate_browse_crop(out_browse, out_crop,
-                                    hit_lat, hit_lon,
-                                    b_min_lat, b_max_lat,
-                                    b_west_lon, b_east_lon,
-                                    box_color):
-                print(f"    browse crop saved: {crop_name}  [{box_color} box]")
+            if os.path.exists(out_crop):
+                print(f"    {crop_name} already exists, skipping annotation")
             else:
-                print(f"    browse crop failed (hit outside image or bounds missing)")
+                b_min_lat  = chosen.get("min_lat",  float("nan"))
+                b_max_lat  = chosen.get("max_lat",  float("nan"))
+                b_west_lon = chosen.get("west_lon", float("nan"))
+                b_east_lon = chosen.get("east_lon", float("nan"))
+
+                annotate_full_browse(out_browse, hit_lat, hit_lon,
+                                     b_min_lat, b_max_lat, b_west_lon, b_east_lon,
+                                     box_color)
+
+                if annotate_browse_crop(out_browse, out_crop,
+                                        hit_lat, hit_lon,
+                                        b_min_lat, b_max_lat,
+                                        b_west_lon, b_east_lon,
+                                        box_color):
+                    print(f"    browse crop saved: {crop_name}  [{box_color} box]")
+                else:
+                    print(f"    browse crop failed (hit outside image or bounds missing)")
 
 print("\nAll done.")
 print(f"Output: {GIF_DIR}")
