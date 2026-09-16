@@ -4,23 +4,18 @@ hirise_lookup.py
 
 For flagged hits (confirmed/potential/interesting) whose comments contain
 specified keywords, queries the NASA PDS ODE REST API for overlapping
-HiRISE images, then clips a ~1200m region around each hit from the
-selected HiRISE product via partial JP2 download over HTTP.
+HiRISE browse images and saves an annotated crop alongside each GIF.
 
-Output: hirise_output/<KEYWORD>/<hit_prefix>/
-  summary.txt           — HiRISE products found, dates, selection rationale
-  hirise_clip.tif       — full-res clip (~4800x4800 px at 0.25 m/px)
-  hirise_browse.jpg     — full browse image (fallback if JP2 clip fails)
-
-Selection strategies (SELECTION_STRATEGY):
-  "after_before_only"   — newest HiRISE after the CTX "before" image date
-  "closest_to_before"   — HiRISE image with date closest to CTX "before" date
-  "newest"              — most recently acquired HiRISE image regardless of date
-  "best_coverage"       — image whose footprint centre is closest to the hit point
+Output (in gif_output/<KEYWORD>/):
+  {id}__{obs_id}.jpg        — full HiRISE browse swath JPEG
+  {id}__{obs_id}__crop.jpg  — 3 km crop centred on hit with colored box:
+      green  = HiRISE acquired after CTX "after" image date
+      yellow = HiRISE acquired between CTX before and after dates
+      red    = HiRISE acquired before CTX "before" image date
+  {id}__summary.txt         — selection rationale, all products found
 
 Usage:
-  Edit KEYWORDS and SELECTION_STRATEGY below, then:
-  python hirise_lookup.py
+  Edit KEYWORDS below, then:  python hirise_lookup.py
 """
 
 import os
@@ -33,24 +28,11 @@ import datetime
 import urllib.request
 import urllib.error
 
-# Must be set before GDAL/rasterio import to enable vsicurl range reads
-os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
-os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
-os.environ.setdefault("PROJ_IGNORE_CELESTIAL_BODY", "YES")
-
-import rasterio
-import rasterio.windows
-from pyproj import Transformer
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-KEYWORDS            = ["MEDIUM"]         # keywords to filter comments on
-SELECTION_STRATEGY  = "after_before_only"
-
-# Set to True to skip hits that have no HiRISE image after the "before" date
-# (only relevant when SELECTION_STRATEGY == "after_before_only")
-SKIP_IF_NO_AFTER    = False
+KEYWORDS = ["MEDIUM"]         # keywords to filter comments on
 
 ROOT        = r"G:\crater_flux_output_folders"
 PROJ        = os.path.join(ROOT, "Impact_flux_project")
@@ -69,10 +51,11 @@ GIF_DIR     = os.path.join(ROOT, "gif_output")
 # Increase if you get zero results and want to widen the net.
 BBOX_MARGIN = 0.03
 
-# Clip size in metres (matches the 200px CTX context crop)
-CLIP_METRES = 1200.0
-HIRISE_SCALE = 0.25        # m/px, standard HiRISE RED channel
-R_MARS       = 3_396_190.0  # IAU 2000 sphere radius, metres
+# GIF crop size in metres (matches the 200px CTX context crop at ~6 m/px)
+CLIP_METRES    = 1200.0
+# Browse context crop: wider than the GIF box so you see surrounding terrain
+BROWSE_CONTEXT_M = 3000.0
+R_MARS         = 3_396_190.0  # IAU 2000 sphere radius, metres
 
 # ODE REST API v2  (results=all is the only way to get product records)
 ODE_URL   = "https://oderest.rsl.wustl.edu/live2/"
@@ -272,141 +255,45 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
     return products
 
 
-def select_product(products, before_date, strategy):
+def select_best_product(products, before_date, after_date):
     """
-    Choose one product from the list according to strategy.
-    Returns (product, note_string) or (None, reason_string).
+    Choose the best HiRISE product and return (product, note, box_color).
+
+    Priority (all try for newest within tier):
+      green  — acquired after CTX after-image date (post-impact context)
+      yellow — between CTX before and after dates
+      red    — before CTX before-image date, or dates unknown
+
+    Always returns something if products is non-empty.
+    box_color is "green" | "yellow" | "red" | None (no products).
     """
     if not products:
-        return None, "no HiRISE products found in search box"
+        return None, "no HiRISE products found in search box", None
 
     dated = [p for p in products if p["_date"] is not None]
+    newest = lambda lst: max(lst, key=lambda p: p["_date"])
 
-    if strategy == "after_before_only":
-        if before_date is None:
-            return None, "no CTX before-date available for after_before_only strategy"
-        after = [p for p in dated if p["_date"] > before_date]
-        if not after:
-            return None, f"no HiRISE image acquired after CTX before-date ({before_date})"
-        chosen = max(after, key=lambda p: p["_date"])
-        return chosen, f"newest HiRISE after {before_date} → {chosen['_date']}"
+    if after_date and dated:
+        tier = [p for p in dated if p["_date"] > after_date]
+        if tier:
+            c = newest(tier)
+            return c, f"after CTX after-date ({after_date}) → {c['_date']}", "green"
 
-    elif strategy == "closest_to_before":
-        if before_date is None or not dated:
-            # fall back to newest
-            chosen = max(dated or products, key=lambda p: p["_date"] or datetime.date.min)
-            return chosen, "closest_to_before: no before-date, fell back to newest"
-        chosen = min(dated, key=lambda p: abs((p["_date"] - before_date).days))
-        delta = (chosen["_date"] - before_date).days
-        return chosen, f"closest to before-date ({before_date}): {chosen['_date']} ({delta:+d} days)"
+    if before_date and dated:
+        tier = [p for p in dated if p["_date"] > before_date
+                and (after_date is None or p["_date"] <= after_date)]
+        if tier:
+            c = newest(tier)
+            return c, f"between CTX dates ({before_date}..{after_date}) → {c['_date']}", "yellow"
 
-    elif strategy == "newest":
-        chosen = max(dated or products, key=lambda p: p["_date"] or datetime.date.min)
-        return chosen, f"newest HiRISE: {chosen['_date']}"
-
-    elif strategy == "best_coverage":
-        # Prefer image whose centre lat/lon is closest to hit point — crude proxy
-        # for coverage when footprint geometry is unavailable
-        return products[0], "best_coverage: took first result (ODE returns closest first)"
-
-    return None, f"unknown strategy: {strategy}"
+    # Fallback: newest available regardless of date
+    if dated:
+        c = newest(dated)
+    else:
+        c = products[0]
+    return c, f"newest available → {c.get('_date','?')} (before CTX before-date or undated)", "red"
 
 
-def product_covers_hit(product, hit_lat, hit_lon):
-    """
-    Return True if the hit lat/lon falls within the product's PDS bounding box.
-    Returns True (allow through) when bounds are unavailable.
-    """
-    min_lat  = product.get("min_lat",  float("nan"))
-    max_lat  = product.get("max_lat",  float("nan"))
-    west_lon = product.get("west_lon", float("nan"))
-    east_lon = product.get("east_lon", float("nan"))
-    if any(math.isnan(x) for x in (min_lat, max_lat, west_lon, east_lon)):
-        return True
-    lat_ok = min_lat <= hit_lat <= max_lat
-    # Normalise to 0..360 for longitude comparison
-    h360 = hit_lon  % 360.0
-    w360 = west_lon % 360.0
-    e360 = east_lon % 360.0
-    lon_ok = (h360 >= w360 and h360 <= e360) if w360 <= e360 else (h360 >= w360 or h360 <= e360)
-    return lat_ok and lon_ok
-
-
-def _project_hit_to_crs(src, hit_lat, hit_lon):
-    """
-    Project (hit_lat, hit_lon) into the rasterio dataset's CRS (Mars equirectangular).
-
-    Uses direct equirectangular math parsed from the CRS WKT.  This avoids pyproj
-    EPSG:4326 → Mars CRS issues where a negative hit longitude (e.g. -174°) is
-    treated as -174 - central_meridian instead of the correct 0-360-wrapped delta.
-    Falls back to pyproj with 0-360-normalised longitude if WKT parsing fails.
-    """
-    wkt = src.crs.to_wkt()
-    r_m  = re.search(r'SPHEROID\[[^\]]*?,\s*([\d.]+)\s*,', wkt)
-    cm_m = re.search(r'"central_meridian"\s*,\s*([-\d.]+)', wkt, re.IGNORECASE)
-    sp_m = re.search(r'"standard_parallel_1"\s*,\s*([-\d.]+)', wkt, re.IGNORECASE)
-
-    if r_m and cm_m and sp_m:
-        R   = float(r_m.group(1))
-        cm  = float(cm_m.group(1))
-        sp  = float(sp_m.group(1))
-        # Normalise to 0..360 so (hit_lon - cm) is the correct small delta
-        lon360 = hit_lon % 360.0
-        x_m = R * (lon360 - cm) * (math.pi / 180.0) * math.cos(math.radians(sp))
-        y_m = R * hit_lat       * (math.pi / 180.0)
-        return x_m, y_m
-
-    # Fallback: pyproj with normalised longitude
-    t = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    return t.transform(hit_lon % 360.0, hit_lat)
-
-
-def attempt_vsicurl_clip(product_url, hit_lat, hit_lon, clip_m, out_tif):
-    """
-    Try to read a clip from a remote JP2 via GDAL vsicurl range reads.
-    Returns (True, '') on success, (False, reason) on failure.
-    """
-    vsi_url = f"/vsicurl/{product_url}"
-
-    try:
-        with rasterio.open(vsi_url) as src:
-            x_crs, y_crs = _project_hit_to_crs(src, hit_lat, hit_lon)
-
-            h, w = src.height, src.width
-            # Pixel scale from the affine transform (metres per pixel)
-            px_scale = abs(src.transform.a)
-            half_px = max(1, int(round(clip_m / px_scale / 2)))
-
-            row_i, col_i = src.index(x_crs, y_crs)  # rasterio.index → (row, col)
-
-            if not (0 <= col_i < w and 0 <= row_i < h):
-                return False, (f"hit projects to col={col_i}, row={row_i} "
-                               f"outside image {w}x{h} — not within this HiRISE footprint")
-
-            col0 = max(0, col_i - half_px)
-            row0 = max(0, row_i - half_px)
-            col1 = min(w, col_i + half_px)
-            row1 = min(h, row_i + half_px)
-
-            window = rasterio.windows.Window(
-                col_off=col0, row_off=row0,
-                width=col1 - col0, height=row1 - row0
-            )
-            data = src.read(1, window=window)
-
-            win_transform = rasterio.windows.transform(window, src.transform)
-            profile = src.profile.copy()
-            profile.update(
-                width=data.shape[1], height=data.shape[0],
-                transform=win_transform, compress="deflate"
-            )
-            with rasterio.open(out_tif, "w", **profile) as dst:
-                dst.write(data, 1)
-
-        return True, ""
-
-    except Exception as e:
-        return False, str(e)
 
 
 def download_browse(browse_url, out_jpg):
@@ -424,26 +311,28 @@ def download_browse(browse_url, out_jpg):
         return False
 
 
-def _delta_lon_deg(hit_lon, center_lon):
-    """
-    Signed angular difference (hit - center) in degrees, normalized to [-180, 180].
-    Handles the mismatch where hit_lon is -180..+180 and ODE center_lon is 0..360.
-    """
-    d = (hit_lon % 360.0 - center_lon % 360.0) % 360.0
-    if d > 180.0:
-        d -= 360.0
-    return d
+
+BOX_COLORS = {
+    "green":  (0,   220, 80),
+    "yellow": (255, 220, 0),
+    "red":    (255, 60,  60),
+}
 
 
-def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
-                          min_lat, max_lat, west_lon, east_lon, clip_m=CLIP_METRES):
+def annotate_browse_crop(browse_path, out_crop, hit_lat, hit_lon,
+                         min_lat, max_lat, west_lon, east_lon,
+                         box_color_name, clip_m=CLIP_METRES,
+                         context_m=BROWSE_CONTEXT_M):
     """
-    Crop the full browse image to ~clip_m around the hit using the image's actual
-    PDS geographic bounds.  The browse is assumed to be a north-up equirect JPEG:
-      x=0 → west_lon,  x=img_w → east_lon
-      y=0 → max_lat,   y=img_h → min_lat
-    Draws a yellow crosshair at the hit position.
-    Returns True on success, False if hit is outside image or bounds are bad.
+    Crop the full browse to context_m around the hit (for terrain context), then
+    draw a colored rectangle showing the clip_m GIF extent.
+
+    Box color encodes HiRISE date relative to CTX pair:
+      green  = after CTX after-image (post-impact confirmation)
+      yellow = between CTX before and after dates
+      red    = before CTX before-image or date unknown
+
+    Returns True on success.
     """
     try:
         img = Image.open(browse_path).convert("RGB")
@@ -455,14 +344,12 @@ def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
         return False
 
     lat_span = max_lat - min_lat
-    # Normalise longitudes to 0..360 and compute span
     w360     = west_lon % 360.0
     e360     = east_lon % 360.0
     lon_span = (e360 - w360) % 360.0
     if lat_span <= 0 or lon_span <= 0:
         return False
 
-    # Fractional position of hit in image (north-up, west-left)
     frac_x = ((hit_lon % 360.0 - w360) % 360.0) / lon_span
     frac_y = (max_lat - hit_lat) / lat_span   # 0=top(north), 1=bottom(south)
 
@@ -472,27 +359,36 @@ def crop_browse_to_extent(browse_path, out_crop, hit_lat, hit_lon,
     cx = frac_x * img_w
     cy = frac_y * img_h
 
-    # Pixel scale from actual footprint
-    lat_span_m = lat_span * (math.pi / 180.0) * R_MARS
-    m_per_px   = lat_span_m / img_h
-    half_px    = max(20, int(round(clip_m / m_per_px / 2)))
+    lat_span_m  = lat_span * (math.pi / 180.0) * R_MARS
+    m_per_px    = lat_span_m / img_h
+    ctx_half    = max(40, int(round(context_m / m_per_px / 2)))
+    box_half    = max(10, int(round(clip_m    / m_per_px / 2)))
 
     px = int(round(cx)); py = int(round(cy))
     if not (0 <= px < img_w and 0 <= py < img_h):
         return False
 
-    x0 = max(0, px - half_px); x1 = min(img_w, px + half_px)
-    y0 = max(0, py - half_px); y1 = min(img_h, py + half_px)
+    # Crop to context extent
+    x0 = max(0, px - ctx_half); x1 = min(img_w, px + ctx_half)
+    y0 = max(0, py - ctx_half); y1 = min(img_h, py + ctx_half)
 
-    from PIL import ImageDraw
-    crop = img.crop((x0, y0, x1, y1))
-    draw = ImageDraw.Draw(crop)
+    crop   = img.crop((x0, y0, x1, y1))
+    draw   = ImageDraw.Draw(crop)
+    color  = BOX_COLORS.get(box_color_name, BOX_COLORS["yellow"])
+
+    # Rectangle showing the GIF extent, relative to crop origin
     cx_c = px - x0; cy_c = py - y0
-    arm  = max(8, half_px // 5)
-    draw.line([(max(0, cx_c - arm), cy_c), (min(crop.width  - 1, cx_c + arm), cy_c)],
-              fill=(255, 220, 0), width=2)
-    draw.line([(cx_c, max(0, cy_c - arm)), (cx_c, min(crop.height - 1, cy_c + arm))],
-              fill=(255, 220, 0), width=2)
+    bx0  = max(0,            cx_c - box_half)
+    bx1  = min(crop.width-1, cx_c + box_half)
+    by0  = max(0,            cy_c - box_half)
+    by1  = min(crop.height-1,cy_c + box_half)
+    draw.rectangle([bx0, by0, bx1, by1], outline=color, width=3)
+
+    # Small crosshair at hit centre
+    arm = max(5, box_half // 6)
+    draw.line([(max(0, cx_c-arm), cy_c), (min(crop.width-1,  cx_c+arm), cy_c)], fill=color, width=2)
+    draw.line([(cx_c, max(0, cy_c-arm)), (cx_c, min(crop.height-1, cy_c+arm))], fill=color, width=2)
+
     crop.save(out_crop, "JPEG", quality=92)
     return True
 
@@ -530,8 +426,6 @@ for kw, hits in keyword_hits.items():
     print(f"  {kw}: {len(hits)} hits")
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 for kw in KEYWORDS:
     hits = keyword_hits[kw]
@@ -586,36 +480,17 @@ for kw in KEYWORDS:
         products = ode_query(hit_lat, hit_lon)
         print(f"    ODE returned {len(products)} HiRISE products")
 
-        # Filter to products whose bounding box actually contains the hit point
-        covered = []
-        for p in products:
-            if product_covers_hit(p, hit_lat, hit_lon):
-                covered.append(p)
-            else:
-                ml  = p.get('min_lat', float('nan'))
-                mxl = p.get('max_lat', float('nan'))
-                wl  = p.get('west_lon', float('nan'))
-                el  = p.get('east_lon', float('nan'))
-                if not any(isinstance(v, float) and math.isnan(v) for v in (ml, mxl, wl, el)):
-                    b = f"lat [{ml:.3f}..{mxl:.3f}] lon [{wl:.3f}..{el:.3f}]"
-                else:
-                    b = "bounds unknown — label parse may have failed"
-                print(f"    Footprint filter: excluded {p.get('obs_id','')} ({b})")
-        products = covered
-
         # ── select product ───────────────────────────────────────────────────
-        chosen, note = select_product(products, before_date, SELECTION_STRATEGY)
+        chosen, note, box_color = select_best_product(products, before_date, after_date)
 
         if chosen is None:
-            if SKIP_IF_NO_AFTER and SELECTION_STRATEGY == "after_before_only":
-                print(f"    SKIP ({note})")
-                continue
             print(f"    NOTE: {note}")
-            # still write summary so the user knows this hit was checked
         else:
-            print(f"    Selected: {chosen.get('pdsid','')}  ({note})")
+            color_label = {"green": "after after-date", "yellow": "between CTX dates",
+                           "red": "before before-date"}.get(box_color, "")
+            print(f"    Selected: {chosen.get('pdsid','')}  [{box_color} — {color_label}]  ({note})")
 
-        # ── write summary.txt (goes directly in kw_dir) ──────────────────────
+        # ── write summary.txt ────────────────────────────────────────────────
         summary_lines = [
             f"Hit:              {prefix}",
             f"GIF ID:           {gif_id}",
@@ -626,12 +501,11 @@ for kw in KEYWORDS:
             f"CTX after date:   {after_date}",
             f"Days between:     {days_bt}",
             f"",
-            f"Selection strategy: {SELECTION_STRATEGY}",
             f"Selection note:   {note}",
+            f"Box color:        {box_color}",
             f"HiRISE products found in search box: {len(products)}",
             f"",
         ]
-
         if products:
             summary_lines.append("All HiRISE observations in search box (RED channel):")
             for p in sorted(products, key=lambda x: x.get("UTC_start_time", ""), reverse=True):
@@ -641,76 +515,18 @@ for kw in KEYWORDS:
                 clon   = p.get("center_lon", float("nan"))
                 marker = " ← SELECTED" if (chosen and p is chosen) else ""
                 summary_lines.append(f"  {pdate}  {pid}  (ctr {clat:.2f},{clon:.2f}){marker}")
-
         if chosen:
             summary_lines += [
                 "",
-                "Selected product details:",
-                f"  Observation ID: {chosen.get('obs_id', '')}",
-                f"  Date:           {chosen.get('UTC_start_time', '')[:10]}",
-                f"  Centre lat/lon: {chosen.get('center_lat','')}, {chosen.get('center_lon','')}",
-                f"  JP2 URL:        {chosen.get('jp2_url', '')}",
-                f"  Browse URL:     {chosen.get('browse_url', '')}",
+                f"  Browse URL: {chosen.get('browse_url', '')}",
             ]
-
         with open(os.path.join(kw_dir, f"{gif_id}__summary.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(summary_lines) + "\n")
 
         if chosen is None:
             continue
 
-        # ── try full-res clip via vsicurl ─────────────────────────────────────
-        # Try chosen product first, then fall back to other products in date order
-        out_tif = os.path.join(kw_dir, f"{gif_id}__hirise_clip.tif")
-        clip_ok = False
-
-        if os.path.exists(out_tif):
-            print(f"    {gif_id}__hirise_clip.tif already exists, skipping clip")
-            clip_ok = True
-        else:
-            # Build ordered list: chosen first, then others sorted by date desc
-            candidates = []
-            if chosen:
-                candidates.append(chosen)
-            for p in sorted(products, key=lambda x: x.get("UTC_start_time",""), reverse=True):
-                if p is not chosen:
-                    candidates.append(p)
-
-            for p in candidates:
-                jp2_url = p.get("jp2_url", "")
-                if not jp2_url:
-                    continue
-                label = "chosen" if p is chosen else p.get("obs_id","?")
-                print(f"    Trying vsicurl clip: {p.get('obs_id','')} ({label})")
-                ok, reason = attempt_vsicurl_clip(jp2_url, hit_lat, hit_lon,
-                                                   CLIP_METRES, out_tif)
-                if ok:
-                    sz = os.path.getsize(out_tif) / 1e6
-                    print(f"    ✓ clip saved ({sz:.1f} MB)  [{p.get('obs_id','')}]")
-                    clip_ok = True
-                    chosen = p
-                    # Write a display JPEG with proper stretch for viewing
-                    jpg_out = out_tif.replace("__hirise_clip.tif", "__hirise_clip.jpg")
-                    try:
-                        with rasterio.open(out_tif) as src:
-                            data = src.read(1).astype(float)
-                        lo, hi = data.min(), data.max()
-                        if hi > lo:
-                            scaled = ((data - lo) / (hi - lo) * 255).clip(0, 255).astype("uint8")
-                        else:
-                            scaled = data.astype("uint8")
-                        Image.fromarray(scaled).save(jpg_out, "JPEG", quality=92)
-                        print(f"    ✓ display JPEG saved  [{os.path.basename(jpg_out)}]")
-                    except Exception as e:
-                        print(f"    display JPEG failed: {e}")
-                    break
-                else:
-                    print(f"      ✗ {reason}")
-
-            if not clip_ok:
-                print(f"    No vsicurl clip succeeded — browse only")
-
-        # ── download browse image (always, even when clip succeeded) ─────────
+        # ── download browse image ─────────────────────────────────────────────
         browse_url  = chosen.get("browse_url", "")
         obs_id      = chosen.get("obs_id", "hirise")
         browse_name = f"{gif_id}__{obs_id}.jpg"
@@ -728,21 +544,22 @@ for kw in KEYWORDS:
                 browse_ok = True
                 print(f"    {browse_name} already exists")
 
-        # ── crop browse to GIF extent (~1200 m) around the hit ────────────────
+        # ── annotate browse crop with colored GIF-extent rectangle ────────────
         if browse_ok:
-            crop_name = f"{gif_id}__{obs_id}__crop.jpg"
-            out_crop  = os.path.join(kw_dir, crop_name)
+            crop_name  = f"{gif_id}__{obs_id}__crop.jpg"
+            out_crop   = os.path.join(kw_dir, crop_name)
             b_min_lat  = chosen.get("min_lat",  float("nan"))
             b_max_lat  = chosen.get("max_lat",  float("nan"))
             b_west_lon = chosen.get("west_lon", float("nan"))
             b_east_lon = chosen.get("east_lon", float("nan"))
-            if crop_browse_to_extent(out_browse, out_crop,
-                                     hit_lat, hit_lon,
-                                     b_min_lat, b_max_lat,
-                                     b_west_lon, b_east_lon):
-                print(f"    browse crop saved: {crop_name}")
+            if annotate_browse_crop(out_browse, out_crop,
+                                    hit_lat, hit_lon,
+                                    b_min_lat, b_max_lat,
+                                    b_west_lon, b_east_lon,
+                                    box_color):
+                print(f"    browse crop saved: {crop_name}  [{box_color} box]")
             else:
-                print(f"    browse crop failed (hit outside image or missing bounds)")
+                print(f"    browse crop failed (hit outside image or bounds missing)")
 
 print("\nAll done.")
 print(f"Output: {GIF_DIR}")
