@@ -142,11 +142,20 @@ def load_gif_ids(kw):
     return result
 
 
+def _hit_in_bbox(hit_lat, hit_lon, min_lat, max_lat, west_lon, east_lon):
+    """Return True only if (hit_lat, hit_lon) falls within the image bounding box."""
+    if not (min_lat <= hit_lat <= max_lat):
+        return False
+    h360 = hit_lon  % 360.0
+    w360 = west_lon % 360.0
+    e360 = east_lon % 360.0
+    return (h360 >= w360 and h360 <= e360) if w360 <= e360 else (h360 >= w360 or h360 <= e360)
+
+
 def ode_query(lat, lon, margin=BBOX_MARGIN):
     """
-    Query ODE REST API v2 for HiRISE RDR products overlapping a bounding box.
-    Returns a list of cleaned product dicts with keys:
-      pdsid, obs_id, date, center_lat, center_lon, jp2_url, browse_url
+    Query ODE REST API v2 for HiRISE RDR products whose bounding box contains
+    (lat, lon).  Products with unparseable bounds are skipped.
     """
     west   = lon_180_to_360(lon - margin)
     east   = lon_180_to_360(lon + margin)
@@ -227,14 +236,17 @@ def ode_query(lat, lon, margin=BBOX_MARGIN):
         if math.isnan(east_lon): east_lon = _item_flt("Easternmost_longitude")
         if math.isnan(west_lon): west_lon = _item_flt("Westernmost_longitude")
 
-        if not any(math.isnan(x) for x in (max_lat, min_lat, east_lon, west_lon)):
-            true_c_lat = (max_lat + min_lat) / 2.0
-            true_c_lon = (east_lon % 360.0 + west_lon % 360.0) / 2.0
-        else:
-            true_c_lat = true_c_lon = float("nan")
+        if any(math.isnan(x) for x in (max_lat, min_lat, east_lon, west_lon)):
+            continue  # bounds unknown — can't verify coverage, skip product
+
+        true_c_lat = (max_lat + min_lat) / 2.0
+        true_c_lon = (east_lon % 360.0 + west_lon % 360.0) / 2.0
 
         if not obs_id:
             continue
+
+        if not _hit_in_bbox(lat, lon, min_lat, max_lat, west_lon, east_lon):
+            continue  # image bbox doesn't contain the hit point
 
         jp2_url, browse_url = _hirise_urls(obs_id)
         products.append({
