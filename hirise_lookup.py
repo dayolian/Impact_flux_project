@@ -64,8 +64,10 @@ OUTPUT_DIR  = os.path.join(ROOT, "hirise_output")
 GIF_DIR     = os.path.join(ROOT, "gif_output")
 
 # Geographic search margin around hit point (degrees).
-# ~0.15° ≈ 9 km at equator — HiRISE swaths are ~6 km wide so this catches most
-BBOX_MARGIN = 0.15
+# HiRISE swath is ~6 km wide (±3 km). 0.03° ≈ 3.3 km at equator, so only
+# images whose swath actually contains the hit point will be returned.
+# Increase if you get zero results and want to widen the net.
+BBOX_MARGIN = 0.03
 
 # Clip size in metres (matches the 200px CTX context crop)
 CLIP_METRES = 1200.0
