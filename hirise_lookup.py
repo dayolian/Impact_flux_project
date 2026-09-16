@@ -45,7 +45,7 @@ from PIL import Image
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-KEYWORDS            = ["LOW"]            # keywords to filter comments on
+KEYWORDS            = ["MEDIUM"]         # keywords to filter comments on
 SELECTION_STRATEGY  = "after_before_only"
 
 # Set to True to skip hits that have no HiRISE image after the "before" date
