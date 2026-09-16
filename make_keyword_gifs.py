@@ -181,6 +181,7 @@ def build_metadata_row(gif_id, hit, meta, gif_name, crops_found):
 
 total_gifs = 0
 total_missing = 0
+total_skipped = 0
 
 for kw in KEYWORDS:
     hits = keyword_hits[kw]
@@ -192,8 +193,24 @@ for kw in KEYWORDS:
 
     print(f"\n── {kw} ({len(hits)} hits) ──")
 
-    meta_rows = []
-    seq = 0  # counts ALL hits in order (including missing crops), for stable IDs
+    # ── Load existing metadata to preserve IDs and skip done GIFs ────────────
+    meta_path = os.path.join(kw_dir, "metadata.csv")
+    existing  = {}   # (hit_prefix, normpath(pair_path)) -> existing row dict
+    all_rows  = []   # ordered list: existing rows first, new rows appended
+    max_seq   = 0
+
+    if os.path.exists(meta_path):
+        with open(meta_path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                key = (row.get("hit_prefix", ""), os.path.normpath(row.get("pair_path", "")))
+                existing[key] = row
+                all_rows.append(row)
+                m = re.match(r'.+_(\d+)$', row.get("id", ""))
+                if m:
+                    max_seq = max(max_seq, int(m.group(1)))
+        print(f"  Loaded {len(existing)} existing entries (max seq {max_seq})")
+
+    seq = max_seq  # new hits count up from here
 
     for hit in hits:
         pair_path = hit.get("wholepath", "")
@@ -201,14 +218,30 @@ for kw in KEYWORDS:
         if not pair_path or not prefix:
             continue
 
-        seq += 1
-        gif_id   = f"{kw}_{seq:04d}"
-        gif_name = f"{gif_id}.gif"
-        gif_path = os.path.join(kw_dir, gif_name)
+        hit_key  = (prefix, os.path.normpath(pair_path))
+        existing_row = existing.get(hit_key)
+
+        if existing_row:
+            gif_id   = existing_row["id"]
+            gif_name = f"{gif_id}.gif"
+            gif_path = os.path.join(kw_dir, gif_name)
+
+            if os.path.exists(gif_path):
+                # Already done — keep existing row unchanged
+                total_skipped += 1
+                print(f"  {gif_name}  (skipped — already exists)")
+                continue
+
+            # GIF file missing despite metadata entry — try to regenerate
+            print(f"  {gif_name}  (re-generating missing GIF)")
+        else:
+            seq += 1
+            gif_id   = f"{kw}_{seq:04d}"
+            gif_name = f"{gif_id}.gif"
+            gif_path = os.path.join(kw_dir, gif_name)
 
         meta = meta_by_path.get(os.path.normpath(pair_path))
         before_path, after_path = find_200px_crops(pair_path, prefix)
-
         crops_ok = before_path is not None
 
         if not crops_ok:
@@ -223,15 +256,23 @@ for kw in KEYWORDS:
                 print(f"  ERROR making GIF for {prefix} ({gif_id}): {e}")
                 crops_ok = False
 
-        meta_rows.append(build_metadata_row(gif_id, hit, meta, gif_name, crops_ok))
+        new_row = build_metadata_row(gif_id, hit, meta, gif_name, crops_ok)
 
-    # Write metadata.csv for this keyword
-    meta_path = os.path.join(kw_dir, "metadata.csv")
+        if existing_row:
+            # Update the row in-place inside all_rows
+            for r in all_rows:
+                if r.get("id") == gif_id:
+                    r.update(new_row)
+                    break
+        else:
+            all_rows.append(new_row)
+
+    # Write metadata.csv (preserves existing rows + appends new ones)
     with open(meta_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=METADATA_FIELDS)
         writer.writeheader()
-        writer.writerows(meta_rows)
-    print(f"  → metadata.csv written ({len(meta_rows)} rows)")
+        writer.writerows(all_rows)
+    print(f"  → metadata.csv written ({len(all_rows)} rows)")
 
-print(f"\nDone. {total_gifs} GIFs created, {total_missing} missing crops.")
+print(f"\nDone. {total_gifs} GIFs created, {total_skipped} skipped (already exist), {total_missing} missing crops.")
 print(f"Output: {GIF_OUTPUT_DIR}")
