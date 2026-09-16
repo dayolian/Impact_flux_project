@@ -341,6 +341,53 @@ def download_browse(browse_url, out_jpg):
         return False
 
 
+def browse_hit_pixel(img_path, hit_lat, hit_lon, center_lat, center_lon):
+    """
+    Estimate the pixel location of (hit_lat, hit_lon) inside the HiRISE browse image.
+
+    Method: assume N-up orientation and 6 km cross-track swath width (standard HiRISE RED).
+    Browse pixels-per-metre is derived from image width / 6000 m.
+    Returns (px, py) clamped to image bounds, or None on any failure.
+    """
+    try:
+        from PIL import Image as _Image
+        with _Image.open(img_path) as im:
+            img_w, img_h = im.size
+    except Exception:
+        return None
+
+    HIRISE_SWATH_M = 6000.0
+    m_per_px = HIRISE_SWATH_M / img_w
+
+    delta_lat_m = (hit_lat - center_lat) * (math.pi / 180.0) * R_MARS
+    delta_lon_m = (hit_lon - center_lon) * (math.pi / 180.0) * R_MARS * math.cos(
+        math.radians(hit_lat)
+    )
+
+    cx = img_w / 2.0 + delta_lon_m / m_per_px
+    cy = img_h / 2.0 - delta_lat_m / m_per_px   # north = up = lower y-index
+
+    px = int(max(0, min(img_w - 1, round(cx))))
+    py = int(max(0, min(img_h - 1, round(cy))))
+    return px, py
+
+
+def draw_crosshair(img_path, px, py, arm=50, thickness=3, color=(255, 220, 0)):
+    """
+    Draw a yellow + crosshair on img_path at pixel (px, py). Overwrites in place.
+    arm: half-length of each arm in pixels.
+    """
+    from PIL import Image as _Image, ImageDraw
+    img = _Image.open(img_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+    draw.line([(max(0, px - arm), py), (min(w - 1, px + arm), py)],
+              fill=color, width=thickness)
+    draw.line([(px, max(0, py - arm)), (px, min(h - 1, py + arm))],
+              fill=color, width=thickness)
+    img.save(img_path, "JPEG", quality=90)
+
+
 # ── Load metadata ─────────────────────────────────────────────────────────────
 
 print("Loading pairsinfo metadata...")
@@ -442,11 +489,7 @@ for kw in KEYWORDS:
         else:
             print(f"    Selected: {chosen.get('pdsid','')}  ({note})")
 
-        # ── output folder ────────────────────────────────────────────────────
-        hit_dir = os.path.join(kw_dir, gif_id)
-        os.makedirs(hit_dir, exist_ok=True)
-
-        # ── write summary.txt ────────────────────────────────────────────────
+        # ── write summary.txt (goes directly in kw_dir) ──────────────────────
         summary_lines = [
             f"Hit:              {prefix}",
             f"GIF ID:           {gif_id}",
@@ -463,7 +506,6 @@ for kw in KEYWORDS:
             f"",
         ]
 
-        # List all found products
         if products:
             summary_lines.append("All HiRISE observations in search box (RED channel):")
             for p in sorted(products, key=lambda x: x.get("UTC_start_time", ""), reverse=True):
@@ -485,7 +527,7 @@ for kw in KEYWORDS:
                 f"  Browse URL:     {chosen.get('browse_url', '')}",
             ]
 
-        with open(os.path.join(hit_dir, "summary.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(kw_dir, f"{gif_id}__summary.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(summary_lines) + "\n")
 
         if chosen is None:
@@ -493,7 +535,7 @@ for kw in KEYWORDS:
 
         # ── try full-res clip via vsicurl ────────────────────────────────────
         product_url = chosen.get("jp2_url", "")
-        out_tif     = os.path.join(hit_dir, "hirise_clip.tif")
+        out_tif     = os.path.join(kw_dir, f"{gif_id}__hirise_clip.tif")
 
         if product_url and not os.path.exists(out_tif):
             print(f"    Attempting vsicurl clip from JP2...")
@@ -501,26 +543,48 @@ for kw in KEYWORDS:
                                       CLIP_METRES, out_tif)
             if ok:
                 sz = os.path.getsize(out_tif) / 1e6
-                print(f"    hirise_clip.tif saved ({sz:.1f} MB)")
+                print(f"    {gif_id}__hirise_clip.tif saved ({sz:.1f} MB)")
             else:
                 print(f"    vsicurl failed — browse fallback only")
         elif os.path.exists(out_tif):
-            print(f"    hirise_clip.tif already exists, skipping")
+            print(f"    {gif_id}__hirise_clip.tif already exists, skipping")
 
-        # ── download browse image as fallback / context ──────────────────────
-        browse_url = chosen.get("browse_url", "")
-        obs_id     = chosen.get("obs_id", "hirise")
-        browse_name = f"{obs_id}__{gif_id}.jpg"
-        out_browse  = os.path.join(hit_dir, browse_name)
+        # ── download browse image ─────────────────────────────────────────────
+        browse_url  = chosen.get("browse_url", "")
+        obs_id      = chosen.get("obs_id", "hirise")
+        browse_name = f"{gif_id}__{obs_id}.jpg"
+        out_browse  = os.path.join(kw_dir, browse_name)
 
-        if browse_url and not os.path.exists(out_browse):
+        already_exists = os.path.exists(out_browse)
+        if browse_url and not already_exists:
             print(f"    Downloading browse image...")
             ok = download_browse(browse_url, out_browse)
             if ok:
                 sz = os.path.getsize(out_browse) / 1e3
                 print(f"    {browse_name} saved ({sz:.0f} KB)")
-        elif os.path.exists(out_browse):
-            print(f"    {browse_name} already exists, skipping")
+            else:
+                ok = False
+        else:
+            ok = already_exists
+            if already_exists:
+                print(f"    {browse_name} already exists, re-drawing crosshair")
+
+        # ── draw crosshair at hit location ────────────────────────────────────
+        if ok and os.path.exists(out_browse):
+            c_lat = chosen.get("center_lat", float("nan"))
+            c_lon = chosen.get("center_lon", float("nan"))
+            try:
+                c_lat = float(c_lat)
+                c_lon = float(c_lon)
+            except (TypeError, ValueError):
+                c_lat = c_lon = float("nan")
+
+            pos = browse_hit_pixel(out_browse, hit_lat, hit_lon, c_lat, c_lon)
+            if pos:
+                draw_crosshair(out_browse, pos[0], pos[1])
+                print(f"    crosshair drawn at pixel {pos[0]},{pos[1]}")
+            else:
+                print(f"    could not estimate hit pixel position for crosshair")
 
 print("\nAll done.")
 print(f"Output: {OUTPUT_DIR}")
