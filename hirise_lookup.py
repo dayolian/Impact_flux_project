@@ -38,6 +38,12 @@ KEYWORDS = [
     "TRACK", "RSL", "IDEA",
 ]
 
+# Set False to delete the full browse swath after the crop is generated.
+# The crop is all you need for review; the full swath is large (~2-4 MB each).
+SAVE_FULL_BROWSE = False
+
+SCALEBAR_M = 100   # scale bar length in metres
+
 ROOT        = r"G:\crater_flux_output_folders"
 PROJ        = os.path.join(ROOT, "Impact_flux_project")
 REVIEWED_CSV = os.path.join(PROJ, "pairsinfo_reviewed_2006-2026.csv")
@@ -328,6 +334,51 @@ def download_browse(browse_url, out_jpg):
 
 
 
+def _load_font(size):
+    for path in (
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            from PIL import ImageFont
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    from PIL import ImageFont
+    return ImageFont.load_default()
+
+
+def _add_scalebar(img, m_per_px, font, bar_m=SCALEBAR_M):
+    """Draw a black scale bar with white-outlined label at bottom-left of img."""
+    draw   = ImageDraw.Draw(img)
+    w, h   = img.size
+    bar_px = max(5, int(round(bar_m / m_per_px)))
+    margin = 10
+    bar_y  = h - margin
+    bar_x0 = margin
+    bar_x1 = bar_x0 + bar_px
+    label  = f"{bar_m} m"
+
+    try:
+        tb = draw.textbbox((0, 0), label, font=font)
+        text_w, text_h = tb[2] - tb[0], tb[3] - tb[1]
+    except AttributeError:
+        text_w, text_h = font.getsize(label)
+
+    text_x = bar_x0 + (bar_px - text_w) // 2
+    text_y = bar_y - text_h - 5
+
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        draw.text((text_x + dx, text_y + dy), label, fill=(255, 255, 255), font=font)
+    draw.text((text_x, text_y), label, fill=(0, 0, 0), font=font)
+    draw.line([(bar_x0, bar_y), (bar_x1, bar_y)], fill=(0, 0, 0), width=5)
+    for x in (bar_x0, bar_x1):
+        draw.line([(x, bar_y - 3), (x, bar_y + 3)], fill=(0, 0, 0), width=2)
+    return img
+
+
 BOX_COLORS = {
     "green":  (0,   220, 80),
     "yellow": (255, 220, 0),
@@ -399,6 +450,8 @@ def annotate_browse_crop(browse_path, out_crop, hit_lat, hit_lon,
     by0  = max(0,            cy_c - box_half)
     by1  = min(crop.height-1,cy_c + box_half)
     draw.rectangle([bx0, by0, bx1, by1], outline=color, width=3)
+
+    _add_scalebar(crop, m_per_px, _load_font(14))
 
     crop.save(out_crop, "JPEG", quality=92)
     return True
@@ -592,9 +645,17 @@ for kw in KEYWORDS:
         browse_name = f"{gif_id}__{obs_id}.jpg"
         out_browse  = os.path.join(kw_dir, browse_name)
 
+        # If crop already exists we don't need to re-download the full browse
+        crop_name = f"{gif_id}__{obs_id}__crop.jpg"
+        out_crop  = os.path.join(kw_dir, crop_name)
+        crop_done = os.path.exists(out_crop)
+
         browse_ok = False
         if browse_url:
-            if not os.path.exists(out_browse):
+            if crop_done:
+                browse_ok = True
+                print(f"    {crop_name} already exists, skipping download+annotation")
+            elif not os.path.exists(out_browse):
                 print(f"    Downloading browse image...")
                 browse_ok = download_browse(browse_url, out_browse)
                 if browse_ok:
@@ -605,13 +666,7 @@ for kw in KEYWORDS:
                 print(f"    {browse_name} already exists")
 
         # ── annotate both full browse (in-place) and crop ────────────────────
-        if browse_ok:
-            crop_name = f"{gif_id}__{obs_id}__crop.jpg"
-            out_crop  = os.path.join(kw_dir, crop_name)
-
-            if os.path.exists(out_crop):
-                print(f"    {crop_name} already exists, skipping annotation")
-            else:
+        if browse_ok and not crop_done:
                 b_min_lat  = chosen.get("min_lat",  float("nan"))
                 b_max_lat  = chosen.get("max_lat",  float("nan"))
                 b_west_lon = chosen.get("west_lon", float("nan"))
@@ -629,6 +684,10 @@ for kw in KEYWORDS:
                     print(f"    browse crop saved: {crop_name}  [{box_color} box]")
                 else:
                     print(f"    browse crop failed (hit outside image or bounds missing)")
+
+                if not SAVE_FULL_BROWSE and os.path.exists(out_browse):
+                    os.remove(out_browse)
+                    print(f"    full browse deleted (SAVE_FULL_BROWSE=False)")
 
 print("\nAll done.")
 print(f"Output: {GIF_DIR}")

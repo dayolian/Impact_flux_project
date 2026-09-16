@@ -25,7 +25,7 @@ Edit KEYWORDS, GIF_OUTPUT_DIR, or frame timing below as needed.
 import os
 import csv
 import re
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +50,9 @@ GIF_OUTPUT_DIR = os.path.join(ROOT, "gif_output")
 # GIF timing: milliseconds per frame
 FRAME_MS_BEFORE = 600   # how long the "before" frame is shown
 FRAME_MS_AFTER  = 600   # how long the "after" frame is shown
+
+CTX_M_PER_PX = 6.0      # CTX ground sampling distance (metres/pixel)
+SCALEBAR_M   = 100       # length of scale bar in metres
 
 # ── Load pairsinfo for metadata lookup ───────────────────────────────────────
 
@@ -96,6 +99,49 @@ for kw, hits in keyword_hits.items():
 
 os.makedirs(GIF_OUTPUT_DIR, exist_ok=True)
 
+def _load_font(size):
+    for path in (
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _add_scalebar(img, m_per_px, font, bar_m=SCALEBAR_M):
+    """Draw a black scale bar with white-outlined label at bottom-left of img."""
+    draw   = ImageDraw.Draw(img)
+    w, h   = img.size
+    bar_px = max(5, int(round(bar_m / m_per_px)))
+    margin = 10
+    bar_y  = h - margin
+    bar_x0 = margin
+    bar_x1 = bar_x0 + bar_px
+    label  = f"{bar_m} m"
+
+    try:
+        tb = draw.textbbox((0, 0), label, font=font)
+        text_w, text_h = tb[2] - tb[0], tb[3] - tb[1]
+    except AttributeError:
+        text_w, text_h = font.getsize(label)
+
+    text_x = bar_x0 + (bar_px - text_w) // 2
+    text_y = bar_y - text_h - 5
+
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        draw.text((text_x + dx, text_y + dy), label, fill=(255, 255, 255), font=font)
+    draw.text((text_x, text_y), label, fill=(0, 0, 0), font=font)
+    draw.line([(bar_x0, bar_y), (bar_x1, bar_y)], fill=(0, 0, 0), width=5)
+    for x in (bar_x0, bar_x1):
+        draw.line([(x, bar_y - 3), (x, bar_y + 3)], fill=(0, 0, 0), width=2)
+    return img
+
+
 def find_200px_crops(pair_path, prefix):
     """Return (before_path, after_path) for 200px crops, or (None, None)."""
     before = os.path.join(pair_path, f"{prefix}_before_200.jpg")
@@ -111,10 +157,10 @@ def find_200px_crops(pair_path, prefix):
 
 
 def make_gif(before_path, after_path, out_path):
-    """Create a two-frame animated GIF from before/after JPEGs."""
-    img_b = Image.open(before_path).convert("RGB")
-    img_a = Image.open(after_path).convert("RGB")
-    # Convert to palette mode for compact GIF
+    """Create a two-frame animated GIF from before/after JPEGs with scale bar."""
+    font  = _load_font(11)
+    img_b = _add_scalebar(Image.open(before_path).convert("RGB"), CTX_M_PER_PX, font)
+    img_a = _add_scalebar(Image.open(after_path).convert("RGB"),  CTX_M_PER_PX, font)
     img_b_p = img_b.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     img_a_p = img_a.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     img_b_p.save(
